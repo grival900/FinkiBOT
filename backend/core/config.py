@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +26,11 @@ class Settings(BaseSettings):
     scrape_user_agent: str = "FinkiBOT/0.1"
     scrape_request_delay_seconds: float = 1.0
     scrape_announcement_limit: int | None = None
+
+    @field_validator("scrape_announcement_limit", mode="before")
+    @classmethod
+    def _empty_str_to_none(cls, value: object) -> object:
+        return None if value == "" else value
 
     frontend_origin: str = "http://localhost:5173"
 

@@ -18,6 +18,17 @@ def upsert_document(db: Session, ndoc: NormalizedDocument) -> tuple[Document, bo
     caller can skip re-chunking/re-embedding unchanged pages."""
     existing = db.query(Document).filter_by(url=ndoc.url).one_or_none()
 
+    if existing is not None and (existing.source != ndoc.source or existing.type != ndoc.type):
+        # Two different scrapers producing the same URL is a bug, not a legitimate
+        # update — silently "winning" here would overwrite one source's content under
+        # the other's source/type label (this happened once: finki_hub.courses and
+        # official.subjects both used the official subject URL as their Document.url).
+        raise ValueError(
+            f"URL collision on {ndoc.url!r}: already indexed as "
+            f"{existing.source}/{existing.type}, but {ndoc.source}/{ndoc.type} scraper "
+            f"produced the same URL"
+        )
+
     if existing is None:
         doc = Document(
             source=ndoc.source,
@@ -72,7 +83,12 @@ def run_full_ingestion() -> dict[str, int]:
             count = 0
             try:
                 for ndoc in entry.fn():
-                    ingest_normalized_document(db, ndoc)
+                    try:
+                        with db.begin_nested():
+                            ingest_normalized_document(db, ndoc)
+                    except Exception:
+                        logger.exception("Failed to ingest %s (%s)", ndoc.url, entry.name)
+                        continue
                     count += 1
                     if count % 20 == 0:
                         db.commit()

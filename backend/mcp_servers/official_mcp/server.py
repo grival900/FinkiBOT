@@ -1,6 +1,5 @@
 """MCP server exposing the official finki.ukim.mk data: announcements (exam schedules,
-enrollment notices, etc.), and course/professor pages (not scraped yet — see
-backend/scrapers/registry.py; these tools return an empty list until that lands).
+enrollment notices, etc.), official course syllabus pages, and professor/staff profiles.
 
 Run standalone: `python -m backend.mcp_servers.official_mcp.server`
 """
@@ -29,15 +28,17 @@ def get_exam_schedule(query: str = "испитна сесија распоред
 
 @mcp.tool()
 def get_course_info(query: str, limit: int = 5) -> list[dict]:
-    """Search official course/subject pages by name or topic. Not yet indexed from
-    finki.ukim.mk directly — prefer finki-hub's `search_courses` tool for now, which
-    already covers course names, accreditation years, and tags."""
+    """Search official course syllabus pages (finki.ukim.mk/mk/subject/<code>) by name
+    or topic: full syllabus text — prerequisites, teacher, ECTS credits, learning
+    objectives, content outline, and literature. For course metadata like accreditation
+    years and Discord channel instead, prefer finki-hub's `search_courses` tool."""
     return run_search(query, k=limit, source="official", type="course")
 
 
 @mcp.tool()
 def get_professor_info(query: str, limit: int = 5) -> list[dict]:
-    """Search professor/staff directory pages by name. Not yet indexed."""
+    """Search professor/staff directory pages by name: bio/resume, publications, and
+    contact email when filled in. Profiles with no bio entered are not indexed."""
     return run_search(query, k=limit, source="official", type="professor")
 
 

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.routers import admin, chat, quiz, search, subscribe
+from backend.api.routers import admin, chat, documents, mcp_tools, quiz, search, subscribe
 from backend.core.config import get_settings
 from backend.scheduler import start_scheduler
 
@@ -32,6 +32,8 @@ app.add_middleware(
 )
 
 app.include_router(search.router)
+app.include_router(documents.router)
+app.include_router(mcp_tools.router)
 app.include_router(chat.router)
 app.include_router(quiz.router)
 app.include_router(subscribe.router)

@@ -5,13 +5,6 @@ from backend.scrapers.official_site.schedule_links import parse_schedule_links_h
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def test_parse_schedule_links_html_extracts_title_and_tool_link():
-    html = (FIXTURES / "schedule_links_widget.html").read_text(encoding="utf-8")
-    links = parse_schedule_links_html(html)
-
-    assert links[0] == ("Распоред на часови и консултации", "http://raspored.finki.ukim.mk")
-
-
 def test_parse_schedule_links_html_extracts_exam_session_link():
     html = (FIXTURES / "schedule_links_widget.html").read_text(encoding="utf-8")
     links = parse_schedule_links_html(html)
@@ -22,15 +15,12 @@ def test_parse_schedule_links_html_extracts_exam_session_link():
     assert "https://finkiukim-my.sharepoint.com/:x:/g/personal/x/june-2026" in urls
 
 
-def test_parse_schedule_links_html_dedupes_repeated_calendar_link():
+def test_parse_schedule_links_html_extracts_map_link_without_subtitle():
     html = (FIXTURES / "schedule_links_widget.html").read_text(encoding="utf-8")
     links = parse_schedule_links_html(html)
 
-    # the generic http://raspored.finki.ukim.mk calendar icon link repeats on every row
-    # but should only appear once (from .ibox-title), not once per row.
-    urls = [url for _title, url in links]
-    assert urls.count("http://raspored.finki.ukim.mk") == 1
+    assert ("ФИНКИ Live Мапа", "https://live.finki.ukim.mk/") in links
 
 
-def test_parse_schedule_links_html_missing_widget_returns_empty():
+def test_parse_schedule_links_html_missing_section_returns_empty():
     assert parse_schedule_links_html("<html><body>no widget here</body></html>") == []

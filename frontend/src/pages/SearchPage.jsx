@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { searchDocuments } from '../api'
 
 const SOURCES = [
@@ -62,9 +63,13 @@ export default function SearchPage() {
       <ul className="result-list">
         {results.map((r) => (
           <li key={`${r.document_id}-${r.chunk_text.slice(0, 20)}`} className="result-item">
-            <a href={r.url} target="_blank" rel="noreferrer">
-              {r.title}
-            </a>
+            {r.source === 'finki_hub' && r.type === 'course' ? (
+              <Link to={`/documents/${r.document_id}`}>{r.title}</Link>
+            ) : (
+              <a href={r.url} target="_blank" rel="noreferrer">
+                {r.title}
+              </a>
+            )}
             <div className="result-meta">
               {r.source} · {r.type}
               {r.published_at ? ` · ${new Date(r.published_at).toLocaleDateString('mk-MK')}` : ''}

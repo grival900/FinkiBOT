@@ -23,6 +23,14 @@ services:
       - "8025:8025" # web UI
       - "1025:1025" # smtp
 
+  adminer:
+    image: adminer
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    depends_on:
+      - db
+
   backend:
     build:
       context: .

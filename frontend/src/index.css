@@ -218,6 +218,158 @@ button:disabled {
   white-space: pre-wrap;
 }
 
+/* Document detail */
+.back-link {
+  display: inline-block;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.back-link:hover {
+  color: var(--accent);
+}
+
+.doc-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.chip {
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.chip-professor {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chip-assistant {
+  color: var(--text-muted);
+}
+
+.accreditation-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.accreditation-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  background: var(--surface);
+}
+
+.accreditation-card h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.accreditation-fields {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  font-size: 14px;
+}
+
+.accreditation-fields dt {
+  color: var(--text-muted);
+}
+
+.accreditation-fields dd {
+  margin: 0;
+}
+
+.doc-source-link {
+  margin-top: 20px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* MCP playground */
+.mcp-server-section {
+  margin-bottom: 28px;
+}
+
+.mcp-server-title {
+  font-size: 18px;
+  margin: 0 0 12px;
+  color: var(--text-muted);
+}
+
+.mcp-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.mcp-tool-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  background: var(--surface);
+}
+
+.mcp-tool-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.mcp-tool-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 10px 0 12px;
+  white-space: pre-wrap;
+}
+
+.mcp-tool-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.mcp-tool-form input[type='text'] {
+  flex: 1;
+  min-width: 140px;
+}
+
+.mcp-tool-form input[type='number'] {
+  width: 55px;
+}
+
+.mcp-result-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 8px 0 4px;
+}
+
+.mcp-result-json {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 12px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* Quiz */
 .quiz-mode-toggle {
   display: flex;

@@ -15,6 +15,38 @@ class SearchResultOut(BaseModel):
     score: float
 
 
+class McpToolParam(BaseModel):
+    name: str
+    type: str
+    required: bool
+    default: str | int | None = None
+
+
+class McpToolOut(BaseModel):
+    server: str
+    name: str
+    description: str
+    params: list[McpToolParam]
+
+
+class McpCallRequest(BaseModel):
+    server: str
+    tool: str
+    query: str
+    limit: int = 5
+
+
+class DocumentOut(BaseModel):
+    id: str
+    source: str
+    type: str
+    title: str
+    url: str
+    published_at: datetime | None
+    content: str
+    doc_metadata: dict
+
+
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str

@@ -15,6 +15,22 @@ export function searchDocuments(query, { source, type, limit = 10 } = {}) {
   return fetch(`${API_BASE_URL}/search?${params}`).then(handleJson)
 }
 
+export function getDocument(id) {
+  return fetch(`${API_BASE_URL}/documents/${id}`).then(handleJson)
+}
+
+export function listMcpTools() {
+  return fetch(`${API_BASE_URL}/mcp/tools`).then(handleJson)
+}
+
+export function callMcpTool(server, tool, query, limit) {
+  return fetch(`${API_BASE_URL}/mcp/call`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ server, tool, query, limit }),
+  }).then(handleJson)
+}
+
 export async function streamChat(message, history, onChunk) {
   const response = await fetch(`${API_BASE_URL}/chat`, {
     method: 'POST',

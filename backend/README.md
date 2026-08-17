@@ -6,10 +6,10 @@ FastAPI app, scrapers, ingestion/RAG pipeline, MCP servers, notifier, and quiz l
 
 | Path | Purpose |
 |---|---|
-| `api/` | FastAPI app + routers (`search`, `chat`, `quiz`, `subscribe`/announcements, `admin`) |
+| `api/` | FastAPI app + routers (`search`, `documents`, `chat`, `quiz`, `subscribe`/announcements, `admin`, `mcp_tools`) |
 | `core/` | Shared config, LLM client wrapper, `retrieval.py` (the one place vector search lives) |
-| `scrapers/official_site/` | `announcements.py` (the board itself) and `schedule_links.py` (a separate reference-links widget in the board's page header — this is where exam-session schedule links actually live, see below) |
-| `scrapers/finki_hub/` | `courses.py` (implemented) plus stubs for thesis/recordings/schedules — see Known gaps |
+| `scrapers/official_site/` | `announcements.py` (the board), `schedule_links.py` (exam-session schedule links), `pages.py` (static info pages, sitemap-driven), `subjects.py` (official course syllabi), `professors.py` (staff profiles) |
+| `scrapers/finki_hub/` | `courses.py` (course listing) and `recordings.py` (recorded-lecture links/notes) — implemented; stubs for thesis archive/schedules — see Known gaps |
 | `scrapers/` (root) | `normalize.py` (common schema), `registry.py` (what `/admin/reindex` runs), `http.py` (shared rate-limited client) |
 | `ingestion/` | Chunking, local embeddings (BGE-M3), pgvector indexing |
 | `mcp_servers/` | `official_mcp/` and `finki_hub_mcp/` — thin tool layers over `core/retrieval.py` |
@@ -20,7 +20,7 @@ FastAPI app, scrapers, ingestion/RAG pipeline, MCP servers, notifier, and quiz l
 | `scheduler.py` | Periodic scrape → index → notify job (APScheduler) |
 | `tests/` | Unit tests — pure-logic and fixture-based, no live network or DB required |
 
-## Local dev
+## Local dev (without Docker)
 
 ```bash
 python -m venv .venv && .venv/Scripts/activate  # or source .venv/bin/activate
@@ -53,23 +53,30 @@ once `ENABLE_SCHEDULER=true`):
 curl -X POST http://localhost:8000/admin/reindex
 ```
 
+A full reindex touches every enabled scraper in `registry.py` and takes ~15-20
+minutes — most of that is a deliberate 1 request/second rate limit against
+finki.ukim.mk and finki-hub.com (polite scraping, not something worth "fixing" by
+speeding up). It's a one-time/periodic maintenance operation, not something a site
+visitor ever waits through — `/search`, `/chat`, and the MCP tools only ever read
+whatever's already indexed.
+
 ## Exam-session schedules
 
 The announcement board's own posts don't contain exam dates — they're published as
 SharePoint spreadsheets linked from a small "Распоред на часови и консултации" widget
-in the board's page header, scraped separately by `schedule_links.py` (`type=schedule`
+on the announcement board page, scraped separately by `schedule_links.py` (`type=schedule`
 documents). We only index the reference link (title + URL), not the spreadsheet's
 contents, so the assistant can point a student to the right file but can't state exact
 dates itself — this is expected, not a bug, until someone adds spreadsheet parsing.
 
 ## Known gaps (see `scrapers/registry.py`)
 
-- `finki_hub.thesis_archive`, `finki_hub.recordings`, `finki_hub.schedules` are stubs —
-  `diplomski.finki-hub.com`, `snimki.finki-hub.com`, and `rasporedi.finki-hub.com` use a
-  different DOM (not the plain `<table>` `predmeti.finki-hub.com` has) and need their own
-  selector investigation before they can be scraped. They're registered but `enabled=False`
-  so `/admin/reindex` skips them instead of failing.
-- Official course/subject pages (`finki.ukim.mk/mk/subject/<code>`) and professor pages
-  aren't scraped directly yet — `finki_hub.courses` (run with `deep=True`) already links
-  each course to its official subject page URL, which is the natural next step for a
-  proper official-site course scraper.
+- `finki_hub.thesis_archive` (`diplomski.finki-hub.com`) — 4000+ individual thesis
+  records across 68 mentors, reachable only via per-mentor click interactions (no API).
+  Deliberately deferred — needs a scoping decision (index everything vs. a
+  per-mentor summary vs. capped to recent years) before it's worth building.
+- `finki_hub.schedules` (`rasporedi.finki-hub.com`) — different DOM, not yet
+  investigated.
+
+Both are registered but `enabled=False`, so `/admin/reindex` skips them instead of
+failing.

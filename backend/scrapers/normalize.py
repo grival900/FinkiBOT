@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 Source = Literal["official", "finki_hub"]
-DocumentType = Literal["announcement", "course", "professor", "thesis", "schedule", "material"]
+DocumentType = Literal["announcement", "course", "professor", "thesis", "schedule", "material", "page"]
 
 
 @dataclass

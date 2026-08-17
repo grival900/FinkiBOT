@@ -7,7 +7,10 @@ from backend.core.config import get_settings
 
 @lru_cache
 def _get_model() -> SentenceTransformer:
-    return SentenceTransformer(get_settings().embedding_model_name)
+    return SentenceTransformer(
+        get_settings().embedding_model_name,
+        model_kwargs={"low_cpu_mem_usage": False},
+    )
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:

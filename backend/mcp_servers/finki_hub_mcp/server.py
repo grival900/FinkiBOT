@@ -1,6 +1,6 @@
-"""MCP server exposing finki-hub.com data: courses (indexed), plus materials, thesis
-archive, and schedules (scrapers not implemented yet — see backend/scrapers/finki_hub/;
-these tools return an empty list until that lands).
+"""MCP server exposing finki-hub.com data: courses, recordings/materials (both
+indexed), plus thesis archive and schedules (scrapers not implemented yet — see
+backend/scrapers/finki_hub/; these two tools return an empty list until that lands).
 
 Run standalone: `python -m backend.mcp_servers.finki_hub_mcp.server`
 """
@@ -15,16 +15,17 @@ mcp = FastMCP("finki-hub")
 @mcp.tool()
 def search_courses(query: str, limit: int = 5) -> list[dict]:
     """Search FINKI courses by name or topic tag (e.g. "Вештачка интелигенција",
-    "Бази на податоци"). Returns accreditation years and tags; each result's `url`
-    links to the course on predmeti.finki-hub.com or, when available, the official
-    finki.ukim.mk subject page."""
+    "Бази на податоци"). Returns level, semester, prerequisites, professors/assistants,
+    and accreditation years/tags from finki-hub's course listing. For the official
+    syllabus text instead, use the finki-official server's `get_course_info` tool."""
     return run_search(query, k=limit, source="finki_hub", type="course")
 
 
 @mcp.tool()
 def search_materials(query: str, limit: int = 5) -> list[dict]:
-    """Search course materials (slides, notes) shared on finki-hub. Not yet indexed —
-    snimki.finki-hub.com/predmeti materials scraping isn't implemented."""
+    """Search recorded-lecture links, playlists, and notes shared per course on
+    snimki.finki-hub.com — a student-maintained collection, not official/comprehensive
+    (only courses the community has contributed a page for are covered)."""
     return run_search(query, k=limit, source="finki_hub", type="material")
 
 
