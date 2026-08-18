@@ -5,12 +5,14 @@ import QuizPage from './pages/QuizPage'
 import SubscribePage from './pages/SubscribePage'
 import DocumentDetailPage from './pages/DocumentDetailPage'
 import MCPPage from './pages/MCPPage'
+import InsightsPage from './pages/InsightsPage'
 
 const NAV_LINKS = [
   { to: '/', label: 'Разговор', end: true },
   { to: '/search', label: 'Пребарување' },
   { to: '/quiz', label: 'Квиз' },
   { to: '/subscribe', label: 'Известувања' },
+  { to: '/insights', label: 'Insights' },
   { to: '/mcp', label: 'MCP алатки' },
 ]
 
@@ -34,6 +36,7 @@ export default function App() {
           <Route path="/search" element={<SearchPage />} />
           <Route path="/documents/:id" element={<DocumentDetailPage />} />
           <Route path="/mcp" element={<MCPPage />} />
+          <Route path="/insights" element={<InsightsPage />} />
           <Route path="/quiz" element={<QuizPage />} />
           <Route path="/subscribe" element={<SubscribePage />} />
         </Routes>

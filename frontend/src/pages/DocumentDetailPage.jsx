@@ -34,7 +34,16 @@ function AccreditationCard({ accreditation }) {
         {accreditation.Предуслов && (
           <>
             <dt>Предуслов</dt>
-            <dd>{accreditation.Предуслов}</dd>
+            <dd>
+              {accreditation.prerequisite_links?.length > 0
+                ? accreditation.prerequisite_links.map((p, i) => (
+                    <span key={`${p.text}-${i}`}>
+                      {i > 0 && ' / '}
+                      {p.document_id ? <Link to={`/documents/${p.document_id}`}>{p.text}</Link> : p.text}
+                    </span>
+                  ))
+                : accreditation.Предуслов}
+            </dd>
           </>
         )}
       </dl>

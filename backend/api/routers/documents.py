@@ -4,10 +4,31 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.api.schemas import DocumentOut
+from backend.core.prerequisites import resolve_prerequisites
 from backend.db import get_db
 from backend.models import Document
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+def _with_resolved_prerequisites(doc: Document, db: Session) -> dict:
+    """Course documents' `accreditations[].Предуслов` is plain text — this resolves it
+    into `prerequisite_links` (course name + document_id when it matches an indexed
+    course) without touching the stored metadata, computed fresh on every read since
+    which courses are indexed can change between reindexes."""
+    metadata = dict(doc.doc_metadata)
+    if doc.type != "course" or not metadata.get("accreditations"):
+        return metadata
+
+    accreditations = []
+    for acc in metadata["accreditations"]:
+        acc = dict(acc)
+        prereq_text = acc.get("Предуслов")
+        if prereq_text:
+            acc["prerequisite_links"] = resolve_prerequisites(db, prereq_text)
+        accreditations.append(acc)
+    metadata["accreditations"] = accreditations
+    return metadata
 
 
 @router.get("/{document_id}", response_model=DocumentOut)
@@ -32,5 +53,5 @@ def get_document(document_id: str, db: Session = Depends(get_db)) -> DocumentOut
         url=doc.url,
         published_at=doc.published_at,
         content=doc.content,
-        doc_metadata=doc.doc_metadata,
+        doc_metadata=_with_resolved_prerequisites(doc, db),
     )

@@ -290,9 +290,70 @@ button:disabled {
   margin: 0;
 }
 
+.accreditation-fields dd a {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.accreditation-fields dd a:hover {
+  text-decoration: underline;
+}
+
 .doc-source-link {
   margin-top: 20px;
   font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Insights */
+.insights-section {
+  margin-bottom: 28px;
+}
+
+.insights-section h2 {
+  font-size: 16px;
+  margin: 0 0 12px;
+  color: var(--text-muted);
+}
+
+.bar-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 220px) 1fr 40px;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.bar-label {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track {
+  height: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.bar-value {
+  text-align: right;
   color: var(--text-muted);
 }
 

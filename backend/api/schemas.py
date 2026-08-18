@@ -47,6 +47,34 @@ class DocumentOut(BaseModel):
     doc_metadata: dict
 
 
+class DocTypeCount(BaseModel):
+    source: str
+    type: str
+    count: int
+
+
+class MonthCount(BaseModel):
+    month: str
+    count: int
+
+
+class TagCount(BaseModel):
+    tag: str
+    count: int
+
+
+class SemesterCount(BaseModel):
+    semester: str
+    count: int
+
+
+class InsightsOut(BaseModel):
+    documents_by_type: list[DocTypeCount]
+    announcements_by_month: list[MonthCount]
+    course_tags: list[TagCount]
+    course_semester_distribution: list[SemesterCount]
+
+
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str

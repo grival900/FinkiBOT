@@ -19,6 +19,10 @@ export function getDocument(id) {
   return fetch(`${API_BASE_URL}/documents/${id}`).then(handleJson)
 }
 
+export function getInsights() {
+  return fetch(`${API_BASE_URL}/insights`).then(handleJson)
+}
+
 export function listMcpTools() {
   return fetch(`${API_BASE_URL}/mcp/tools`).then(handleJson)
 }
