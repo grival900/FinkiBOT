@@ -26,8 +26,23 @@ SYSTEM_PROMPT = (
     "what the student is asking about (e.g. they ask about the June exam session and a "
     "schedule entry is titled 'јунска испитна сесија'), say you don't have the exact dates "
     "but give them that specific link — don't substitute a less relevant schedule link just "
-    "because it's also present in the context."
+    "because it's also present in the context.\n\n"
+    "Keep answers concise and scannable: lead with the direct answer, don't restate the "
+    "question, and don't pad with filler or repeat the same point across sources. It's fine "
+    "to be longer when the question genuinely calls for it (e.g. summarizing a professor's "
+    "full bio or a course syllabus) — just don't stretch length unnecessarily."
 )
+
+
+def citation_url(result: SearchResult) -> str:
+    """finki_hub course pages have no stable per-course route to cite — clicking a row
+    on predmeti.finki-hub.com never changes the URL (it's a client-side modal, not a
+    real route), so any URL we hand the LLM for one only ever lands on the generic
+    listing page, not the specific course. Cite our own document page instead, which
+    reliably shows the same details (and is what /search already links to for these)."""
+    if result.source == "finki_hub" and result.type == "course":
+        return f"{settings.frontend_origin}/documents/{result.document_id}"
+    return result.url
 
 
 def build_context(results: list[SearchResult]) -> str:
@@ -36,7 +51,7 @@ def build_context(results: list[SearchResult]) -> str:
     blocks = []
     for r in results:
         date = r.published_at.date().isoformat() if r.published_at else "n/a"
-        blocks.append(f"[{r.title}] (type: {r.type}, url: {r.url}, date: {date})\n{r.chunk_text}")
+        blocks.append(f"[{r.title}] (type: {r.type}, url: {citation_url(r)}, date: {date})\n{r.chunk_text}")
     return "\n\n---\n\n".join(blocks)
 
 
@@ -67,7 +82,7 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingRespon
         stream = client.models.generate_content_stream(
             model=settings.llm_model,
             contents=contents,
-            config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, max_output_tokens=1024),
+            config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, max_output_tokens=2048),
         )
         for chunk in stream:
             if chunk.text:

@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { apiGet, type Accreditation, type DocumentDetail } from "@/lib/api";
 import { Notice, Page } from "@/components/Page";
@@ -73,6 +73,20 @@ function Prerequisite({ acc }: { acc: Accreditation }) {
   return <span>{typeof raw === "string" ? raw : "—"}</span>;
 }
 
+function BackLink() {
+  const router = useRouter();
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      onClick={() => router.history.back()}
+      className="mb-4 text-sm text-muted-foreground hover:text-foreground hover:underline"
+    >
+      {t("back")}
+    </button>
+  );
+}
+
 function DocumentPage() {
   const { id } = Route.useParams();
   const { t } = useI18n();
@@ -101,14 +115,14 @@ function DocumentPage() {
 
   if (loading) {
     return (
-      <Page title="…">
+      <Page title="…" beforeHeader={<BackLink />}>
         <Notice kind="info">{t("loading")}</Notice>
       </Page>
     );
   }
   if (error || !doc) {
     return (
-      <Page title={t("error")}>
+      <Page title={t("error")} beforeHeader={<BackLink />}>
         <Notice kind="error">{error ?? "404"}</Notice>
       </Page>
     );
@@ -120,6 +134,7 @@ function DocumentPage() {
   return (
     <Page
       title={doc.title}
+      beforeHeader={<BackLink />}
       description={[doc.source, doc.type, doc.published_at?.slice(0, 10)]
         .filter(Boolean)
         .join(" · ")}

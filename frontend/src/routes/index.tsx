@@ -11,6 +11,58 @@ import {
   type Conversation,
 } from "@/lib/chat-history";
 
+// Chat answers cite sources in three shapes Gemini isn't consistent about:
+// markdown links ([text](url)), bare URLs, and — apparently — a bare URL wrapped in
+// just brackets with no parens ([url]). All three are handled, rendering everything
+// else as plain text. Every URL alternative excludes "]" so a stray closing bracket
+// from the third shape can never get swallowed into a bare-URL match and corrupt it
+// (this actually happened: a real page 404'd because its href ended in "%5D").
+const LINK_PATTERN =
+  /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\[(https?:\/\/[^\s\]]+)\]|https?:\/\/[^\s\])]+/g;
+
+function linkifyMessage(content: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let key = 0;
+  let match: RegExpExecArray | null;
+
+  const link = (href: string, text: string) => (
+    <a
+      key={key++}
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-primary underline underline-offset-2 hover:opacity-80"
+    >
+      {text}
+    </a>
+  );
+
+  LINK_PATTERN.lastIndex = 0;
+  while ((match = LINK_PATTERN.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(content.slice(lastIndex, match.index));
+    }
+
+    if (match[1] && match[2]) {
+      nodes.push(link(match[2], match[1])); // [text](url)
+    } else if (match[3]) {
+      nodes.push(link(match[3], match[3])); // [url]
+    } else {
+      let url = match[0];
+      const trailing = /[.,;:!?]+$/.exec(url)?.[0] ?? "";
+      if (trailing) url = url.slice(0, -trailing.length);
+      nodes.push(link(url, url));
+      if (trailing) nodes.push(trailing);
+    }
+    lastIndex = LINK_PATTERN.lastIndex;
+  }
+  if (lastIndex < content.length) {
+    nodes.push(content.slice(lastIndex));
+  }
+  return nodes;
+}
+
 type ChatSearch = { c?: string | undefined; new?: number | undefined };
 
 export const Route = createFileRoute("/")({
@@ -125,7 +177,7 @@ function ChatPage() {
                         : "max-w-[85%] rounded-lg border border-border bg-card px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words text-card-foreground"
                     }
                   >
-                    {m.content || (loading ? "…" : "")}
+                    {m.content ? linkifyMessage(m.content) : loading ? "…" : ""}
                   </div>
                 </div>
               ))}

@@ -1,10 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { apiGet, type SearchResult } from "@/lib/api";
 import { Notice, Page } from "@/components/Page";
 import { useI18n } from "@/lib/i18n";
 
+type SearchSearch = { q?: string | undefined; source?: string | undefined };
+
 export const Route = createFileRoute("/search")({
+  validateSearch: (search: Record<string, unknown>): SearchSearch => ({
+    q: typeof search["q"] === "string" ? search["q"] : undefined,
+    source: typeof search["source"] === "string" ? search["source"] : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Пребарување — FinkiBOT" },
@@ -31,27 +37,52 @@ function fmtDate(d: string | null) {
 
 function SearchPage() {
   const { t } = useI18n();
-  const [q, setQ] = useState("");
-  const [source, setSource] = useState("");
+  const { q: urlQ, source: urlSource } = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const [q, setQ] = useState(urlQ ?? "");
+  const [source, setSource] = useState(urlSource ?? "");
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!q.trim()) return;
+  // The query itself lives in the URL, not just component state — so it survives a
+  // page refresh, and browser back/forward after opening a result restores the exact
+  // search instead of wiping it (this effect re-runs whenever those params change,
+  // which covers both cases).
+  useEffect(() => {
+    setQ(urlQ ?? "");
+    setSource(urlSource ?? "");
+    if (!urlQ) {
+      setResults(null);
+      return;
+    }
+    let cancelled = false;
     setLoading(true);
     setError(null);
-    try {
-      const params = new URLSearchParams({ q: q.trim(), limit: "10" });
-      if (source) params.set("source", source);
-      setResults(await apiGet<SearchResult[]>(`/search?${params.toString()}`));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setResults(null);
-    } finally {
-      setLoading(false);
-    }
+    const params = new URLSearchParams({ q: urlQ, limit: "10" });
+    if (urlSource) params.set("source", urlSource);
+    apiGet<SearchResult[]>(`/search?${params.toString()}`)
+      .then((r) => {
+        if (!cancelled) setResults(r);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+          setResults(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [urlQ, urlSource]);
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!q.trim()) return;
+    navigate({ search: { q: q.trim(), source: source || undefined } });
   }
 
   return (

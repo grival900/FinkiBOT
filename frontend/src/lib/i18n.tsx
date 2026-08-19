@@ -36,6 +36,7 @@ const dict = {
   loading: { mk: "Се вчитува…", en: "Loading…" },
   error: { mk: "Грешка", en: "Error" },
   source_ref: { mk: "Извор", en: "Source" },
+  back: { mk: "← Назад", en: "← Back" },
   professors: { mk: "Професори", en: "Professors" },
   assistants: { mk: "Асистенти", en: "Assistants" },
   tags: { mk: "Тагови", en: "Tags" },
