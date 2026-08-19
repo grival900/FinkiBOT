@@ -1,16 +1,31 @@
-# React + Vite
+# Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+FinkiBOT's web app: chat, search, quiz maker, subscriptions, an Insights dashboard,
+and an MCP tools playground. React 19 + TypeScript, built on TanStack Start (router +
+SSR shell) with Tailwind CSS and shadcn/ui components.
 
-Currently, two official plugins are available:
+Talks to the FastAPI backend over plain REST calls — see `src/lib/api.ts` for the full
+typed client. No backend logic lives here.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Development
 
-## React Compiler
+Normally run via the root `docker compose up --build` (see the project root
+[README](../README.md)) — this section is for running the frontend on its own.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```sh
+npm install
+npm run dev
+```
 
-## Expanding the Oxlint configuration
+Requires `VITE_API_BASE_URL` (see `.env.example`) pointing at a running backend —
+defaults to `http://localhost:8000`.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Layout
+
+| Path | Purpose |
+|---|---|
+| `src/routes/` | One file per page (TanStack Router file-based routing) |
+| `src/components/ui/` | shadcn/ui primitives |
+| `src/components/Sidebar.tsx` | Nav, theme toggle, language toggle |
+| `src/lib/api.ts` | Typed API client + response types for every backend endpoint |
+| `src/lib/theme.tsx`, `src/lib/i18n.tsx` | Dark mode and МК/EN language providers |
