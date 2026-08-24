@@ -1,16 +1,28 @@
-"""Scrapes official course syllabus pages (finki.ukim.mk/mk/subject/<code>) — title,
-code, study programs, ECTS credits, teacher list, prerequisites, learning objectives,
-and content outline. Confirmed live: this legacy Drupal template (served from
-oldsite.finki.ukim.mk, same redirect `announcements.py` used to go through) has NOT
-been replaced by anything on the redesigned site — unlike announcements, there is no
-newer equivalent, so this genuinely is the live, canonical source for this content,
-not a stale mirror.
+"""Scrapes official course syllabus pages (finki.ukim.mk/mk/subject/<code>) for the one
+thing `finki_hub.courses` doesn't have: full syllabus prose — learning objectives,
+content outline, literature. Everything else about a course (code, level, semester,
+credits, prerequisites, professors/assistants, accreditation programs) is already
+covered by `finki_hub.courses` from a single `courses.json` fetch, so this scraper is
+deliberately scoped to just the syllabus gap rather than re-scraping course identity —
+see `SCRAPE_SUBJECTS_LIMIT` below for why, and `registry.py` for why this runs weekly
+instead of hourly.
+
+Confirmed live: this legacy Drupal template (served from oldsite.finki.ukim.mk, same
+redirect `announcements.py` used to go through) has NOT been replaced by anything on
+the redesigned site — unlike announcements, there is no newer equivalent, so this
+genuinely is the live, canonical source for this content, not a stale mirror.
 
 Unlike other scrapers, this one has no independent listing or sitemap of its own:
-subject page URLs only exist as `official_url` entries on already-indexed
-`finki_hub.courses` documents (captured from the finki-hub course detail dialog). So
-this reads those URLs from the DB instead of crawling for them — it depends on
-`finki_hub.courses` having already run at least once.
+subject page URLs only exist as the `official_subject_url` field on already-indexed
+`finki_hub.courses` documents (the latest accreditation year's URL — older curriculum
+revisions aren't worth a separate page fetch). So this reads those URLs from the DB
+instead of crawling for them — it depends on `finki_hub.courses` having already run at
+least once.
+
+Even scoped to one URL per course, that's ~180 individual page fetches with no bulk
+endpoint — at the deliberate 1 req/sec rate limit, a full pass costs several minutes
+on its own. `SCRAPE_SUBJECTS_LIMIT` caps how many get fetched in one run so this stays
+bounded; unset it for full coverage on the (weekly, off-hours) slow cadence.
 """
 
 import logging
@@ -18,6 +30,7 @@ from collections.abc import Iterator
 
 import httpx
 
+from backend.core.config import get_settings
 from backend.db import SessionLocal
 from backend.models import Document
 from backend.scrapers.http import get, make_client
@@ -30,13 +43,10 @@ logger = logging.getLogger(__name__)
 def _subject_urls_from_courses() -> list[str]:
     with SessionLocal() as db:
         rows = db.query(Document.doc_metadata).filter(Document.source == "finki_hub", Document.type == "course")
-        urls: set[str] = set()
-        for (metadata,) in rows:
-            for acc in metadata.get("accreditations", []):
-                url = acc.get("official_url")
-                if url:
-                    urls.add(url)
-    return sorted(urls)
+        urls = sorted({url for (metadata,) in rows if (url := metadata.get("official_subject_url"))})
+
+    limit = get_settings().scrape_subjects_limit
+    return urls[:limit] if limit is not None else urls
 
 
 def parse_subject_html(html: bytes | str) -> tuple[str, str]:

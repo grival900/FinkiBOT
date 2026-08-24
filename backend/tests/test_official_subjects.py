@@ -1,10 +1,53 @@
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from backend.scrapers.official_site import subjects
-from backend.scrapers.official_site.subjects import parse_subject_html, scrape_subjects
+from backend.scrapers.official_site.subjects import _subject_urls_from_courses, parse_subject_html, scrape_subjects
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _mock_db_rows(rows: list[dict]):
+    db = MagicMock()
+    db.query.return_value.filter.return_value = [(row,) for row in rows]
+    session_local = MagicMock()
+    session_local.return_value.__enter__.return_value = db
+    return session_local
+
+
+def test_subject_urls_reads_official_subject_url_only_deduped_and_sorted():
+    rows = [
+        {"official_subject_url": "https://www.finki.ukim.mk/mk/subject/B"},
+        {"official_subject_url": "https://www.finki.ukim.mk/mk/subject/A"},
+        {"official_subject_url": "https://www.finki.ukim.mk/mk/subject/A"},
+        {},  # course with no official page at all
+    ]
+    with (
+        patch.object(subjects, "SessionLocal", _mock_db_rows(rows)),
+        patch.object(subjects, "get_settings") as mock_settings,
+    ):
+        mock_settings.return_value.scrape_subjects_limit = None
+        urls = _subject_urls_from_courses()
+
+    assert urls == [
+        "https://www.finki.ukim.mk/mk/subject/A",
+        "https://www.finki.ukim.mk/mk/subject/B",
+    ]
+
+
+def test_subject_urls_respects_configured_limit():
+    rows = [{"official_subject_url": f"https://www.finki.ukim.mk/mk/subject/{c}"} for c in "CBA"]
+    with (
+        patch.object(subjects, "SessionLocal", _mock_db_rows(rows)),
+        patch.object(subjects, "get_settings") as mock_settings,
+    ):
+        mock_settings.return_value.scrape_subjects_limit = 2
+        urls = _subject_urls_from_courses()
+
+    assert urls == [
+        "https://www.finki.ukim.mk/mk/subject/A",
+        "https://www.finki.ukim.mk/mk/subject/B",
+    ]
 
 
 def test_parse_subject_html_extracts_title_and_syllabus_content():

@@ -13,7 +13,11 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    scheduler = start_scheduler(settings.scheduler_interval_minutes) if settings.enable_scheduler else None
+    scheduler = (
+        start_scheduler(settings.scheduler_interval_minutes, settings.scheduler_slow_interval_minutes)
+        if settings.enable_scheduler
+        else None
+    )
     try:
         yield
     finally:

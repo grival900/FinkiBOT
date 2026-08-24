@@ -1,9 +1,16 @@
 """Scrapes teaching-staff profile pages (finki.ukim.mk/kadar/<slug>) — name, email, and
 resume/bio plus other tabs (books, papers, conferences, projects, membership) when
-filled in. Sourced from the site's own WordPress sitemap for this custom post type,
-same pattern as `pages.py`:
+filled in.
 
-    https://finki.ukim.mk/wp-sitemap-posts-nastaven_kadar-1.xml
+Discovered via the staff directory listing page, not a sitemap: every `/wp-sitemap*`
+path on finki.ukim.mk now 307-redirects to a decommissioned `oldsite.finki.ukim.mk`
+domain that itself bounces back to `/not-found` — a leftover redirect rule from the
+site's redesign. That lands as a 200 OK (the soft-404 page), so `get()`'s
+`raise_for_status()` never catches it; the old sitemap-based discovery just silently
+parsed zero `<loc>` tags out of the HTML and yielded nothing, forever.
+
+`/kadar/` itself isn't affected by that redirect and lists every profile directly:
+confirmed live, one page, no pagination, ~107 `a.kadar-item__link` entries.
 
 Confirmed live: all tabs (Резиме/Книги/Трудови/Конференции/Проекти/Член) are
 server-rendered in the initial HTML regardless of which one is visually active, so a
@@ -19,17 +26,25 @@ import httpx
 
 from backend.scrapers.http import get, make_client
 from backend.scrapers.normalize import NormalizedDocument
-from backend.scrapers.official_site.base import BASE_URL, element_to_text, parse_html, parse_xml
+from backend.scrapers.official_site.base import BASE_URL, element_to_text, parse_html
 
 logger = logging.getLogger(__name__)
 
-SITEMAP_PATH = "/wp-sitemap-posts-nastaven_kadar-1.xml"
+LISTING_PATH = "/kadar/"
 MIN_CONTENT_LENGTH = 100
 
 
-def parse_sitemap_xml(xml: bytes | str) -> list[str]:
-    soup = parse_xml(xml)
-    return [loc.get_text(strip=True) for loc in soup.select("loc")]
+def parse_listing_html(html: bytes | str) -> list[str]:
+    """Pure parsing step, unit-testable. Returns absolute profile URLs from the staff directory."""
+    soup = parse_html(html)
+    urls: list[str] = []
+    seen: set[str] = set()
+    for a in soup.select("a.kadar-item__link[href]"):
+        url = a["href"]
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+    return urls
 
 
 def parse_professor_html(html: bytes | str) -> tuple[str, str, str | None]:
@@ -47,8 +62,8 @@ def parse_professor_html(html: bytes | str) -> tuple[str, str, str | None]:
 
 def scrape_professors() -> Iterator[NormalizedDocument]:
     with make_client() as client:
-        sitemap_response = get(client, f"{BASE_URL}{SITEMAP_PATH}")
-        urls = parse_sitemap_xml(sitemap_response.content)
+        listing_response = get(client, f"{BASE_URL}{LISTING_PATH}")
+        urls = parse_listing_html(listing_response.content)
 
         for url in urls:
             try:

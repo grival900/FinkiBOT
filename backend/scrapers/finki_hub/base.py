@@ -5,6 +5,13 @@ DIPLOMSKI_URL = "https://diplomski.finki-hub.com"
 SNIMKI_URL = "https://snimki.finki-hub.com"
 RASPOREDI_URL = "https://rasporedi.finki-hub.com"
 
+ASSETS_BASE_URL = "https://assets.finki-hub.com"
+COURSES_JSON_URL = f"{ASSETS_BASE_URL}/courses.json"
+STAFF_JSON_URL = f"{ASSETS_BASE_URL}/staff.json"
+SESSIONS_JSON_URL = f"{ASSETS_BASE_URL}/sessions.json"
+SESSIONS_BASE_URL = f"{ASSETS_BASE_URL}/sessions"
+OFFICIAL_SUBJECT_BASE = "https://www.finki.ukim.mk/mk/subject"
+
 
 def parse_html(content: str) -> BeautifulSoup:
     return BeautifulSoup(content, "lxml")

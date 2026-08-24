@@ -48,9 +48,16 @@ Leave that running in one terminal. In a second terminal, populate the database 
 it starts empty, so nothing will show up in chat/search until you run this:
 
 ```bash
-# 3. Scrape + index everything (takes ~15-20 min the first time)
-docker compose exec backend python -m backend.scripts.reindex
+# 3. Scrape + index the cheap/time-sensitive sources first (well under a minute) —
+#    announcements + finki-hub's courses/staff/sessions JSON feeds
+docker compose exec backend python -m backend.scripts.reindex frequent
+
+# 4. Then the slower sources (official course syllabi, professor profiles,
+#    finki-hub recordings — one HTTP request per item, several minutes)
+docker compose exec backend python -m backend.scripts.reindex slow
 ```
+
+(Or just `python -m backend.scripts.reindex` with no argument for both at once.)
 
 That's the whole setup. Once it finishes, open:
 
@@ -83,10 +90,12 @@ editing code and saving just works — no rebuild, no restart.
 Your scraped data persists in a Docker volume, not in the containers, so
 `docker compose down` / `up` won't lose it. Re-run the reindex whenever you want
 fresh data (new announcements, updated course info) — it doesn't happen
-automatically in dev (`ENABLE_SCHEDULER=false` in `.env`):
+automatically in dev (`ENABLE_SCHEDULER=false` in `.env`; when enabled, frequent
+sources refresh hourly and slow ones weekly by default — see `backend/README.md`):
 
 ```bash
-docker compose exec backend python -m backend.scripts.reindex
+docker compose exec backend python -m backend.scripts.reindex frequent  # seconds
+docker compose exec backend python -m backend.scripts.reindex slow      # minutes
 ```
 
 Other useful commands:
@@ -128,19 +137,31 @@ maker. Swapping providers means touching `backend/core/llm.py`,
 
 ## What's indexed right now
 
+finki-hub.com is preferred wherever it has the data — cheap single JSON fetches vs.
+finki.ukim.mk's one-request-per-item pages with no bulk endpoint. Official is only
+scraped for what finki-hub genuinely doesn't have (or doesn't have in full: syllabus
+prose beyond finki-hub's course metadata).
+
 | Source | Content | Scraper |
 |---|---|---|
-| finki.ukim.mk | Announcement board | `official.announcements` |
-| finki.ukim.mk | Exam-session schedule links | `official.schedule_links` |
-| finki.ukim.mk | Static info pages (student service, procedures, contacts, etc.) | `official.pages` |
-| finki.ukim.mk | Official course syllabi | `official.subjects` |
-| finki.ukim.mk | Professor/staff profiles | `official.professors` |
-| finki-hub.com | Course listing (level, semester, professors, prerequisites) | `finki_hub.courses` |
+| finki-hub.com | Course listing (level, semester, professors, prerequisites, accreditation) | `finki_hub.courses` |
+| finki-hub.com | Teaching staff directory (title, position, cabinet, email, consultations) | `finki_hub.staff` |
+| finki-hub.com | Exam-session schedule download links | `finki_hub.sessions` |
 | finki-hub.com | Recorded-lecture links & notes per course | `finki_hub.recordings` |
+| finki.ukim.mk | Announcement board | `official.announcements` |
+| finki.ukim.mk | Exam-session schedule reference links (from the announcement board widget) | `official.schedule_links` |
+| finki.ukim.mk | Official course syllabus prose — objectives, content outline, literature (capped, see `SCRAPE_SUBJECTS_LIMIT`) | `official.subjects` |
+| finki.ukim.mk | Professor bios/publications (finki-hub's staff directory has contact info only, no bios) | `official.professors` |
 
 **Not yet implemented** (registered but disabled in `backend/scrapers/registry.py`,
 so a reindex skips them instead of failing): finki-hub's thesis archive (4000+
 records, needs its own scoping) and class schedules (`rasporedi.finki-hub.com`).
+
+**Known broken:** none currently — `official.pages` (static info pages) was removed
+this session; its only discovery mechanism (finki.ukim.mk's WordPress sitemap)
+dead-redirects after the site's redesign, so it had been silently indexing nothing.
+If someone wants that content back, it needs a real listing page found on the live
+site first (same fix `official.professors` got — see its docstring).
 
 ## A quick heads-up if something's not scraping right
 

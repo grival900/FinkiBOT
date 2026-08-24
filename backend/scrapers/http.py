@@ -1,7 +1,4 @@
-"""Shared polite HTTP client for static-HTML scrapers (official_site).
-
-finki_hub scrapers use Playwright instead since that site is client-rendered.
-"""
+"""Shared polite HTTP client for scrapers (official_site, finki_hub)."""
 
 import time
 

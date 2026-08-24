@@ -1,4 +1,5 @@
 import logging
+import threading
 
 from sqlalchemy.orm import Session
 
@@ -10,6 +11,8 @@ from backend.scrapers.normalize import NormalizedDocument
 from backend.scrapers.registry import SCRAPERS
 
 logger = logging.getLogger(__name__)
+
+_ingestion_lock = threading.Lock()
 
 
 def upsert_document(db: Session, ndoc: NormalizedDocument) -> tuple[Document, bool]:
@@ -72,13 +75,51 @@ def ingest_normalized_document(db: Session, ndoc: NormalizedDocument) -> tuple[D
     return doc, changed
 
 
+def run_ingestion(cadence: str | None = None) -> dict[str, int]:
+    """Runs every enabled scraper matching `cadence` ("frequent" or "slow"), or every
+    enabled scraper if `cadence` is None. Returns a per-scraper count of documents seen
+    (used by /admin/reindex and the scheduler for logging).
+
+    Guarded by a lock so concurrent calls (e.g. scheduler + manual trigger) don't race —
+    the frequent and slow scheduler jobs share this same lock, so one running long never
+    causes the other to double up on the same source."""
+    if not _ingestion_lock.acquire(blocking=False):
+        logger.warning("Skipping ingestion — another ingestion is already running")
+        return {}
+    try:
+        return _run_ingestion_locked(cadence)
+    finally:
+        _ingestion_lock.release()
+
+
 def run_full_ingestion() -> dict[str, int]:
-    """Runs every enabled scraper and ingests its output. Returns a per-scraper count of
-    documents seen (used by /admin/reindex and the scheduler for logging)."""
+    """Runs every enabled scraper, regardless of cadence. Slow (see `registry.py`) —
+    prefer `run_frequent_ingestion()`/`run_slow_ingestion()` for the scheduler; this is
+    for a deliberate one-off full rebuild (`/admin/reindex` with no `cadence`, or
+    `python -m backend.scripts.reindex`)."""
+    return run_ingestion(cadence=None)
+
+
+def run_frequent_ingestion() -> dict[str, int]:
+    """Runs only frequent-cadence scrapers: cheap JSON feeds and the announcement
+    board. Safe to run every scheduler tick."""
+    return run_ingestion(cadence="frequent")
+
+
+def run_slow_ingestion() -> dict[str, int]:
+    """Runs only slow-cadence scrapers: sources with no bulk endpoint that require one
+    HTTP request per item (official course syllabi, professor profiles, recordings
+    pages) and rarely change. Meant for a much longer scheduler interval."""
+    return run_ingestion(cadence="slow")
+
+
+def _run_ingestion_locked(cadence: str | None) -> dict[str, int]:
     stats: dict[str, int] = {}
     with SessionLocal() as db:
         for entry in SCRAPERS:
             if not entry.enabled:
+                continue
+            if cadence is not None and entry.cadence != cadence:
                 continue
             count = 0
             try:

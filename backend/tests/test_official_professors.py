@@ -2,9 +2,24 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backend.scrapers.official_site import professors
-from backend.scrapers.official_site.professors import parse_professor_html, scrape_professors
+from backend.scrapers.official_site.professors import parse_listing_html, parse_professor_html, scrape_professors
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_parse_listing_html_extracts_profile_urls_and_dedupes():
+    html = """
+    <div class="kadar-list">
+        <a class="kadar-item__link" href="https://finki.ukim.mk/kadar/full/">Полн Профил</a>
+        <a class="kadar-item__link" href="https://finki.ukim.mk/kadar/empty/">Празен Профил</a>
+        <a class="kadar-item__link" href="https://finki.ukim.mk/kadar/full/">Полн Профил</a>
+        <a class="some-other-link" href="https://finki.ukim.mk/kadar/?kat=docenti">Доценти</a>
+    </div>
+    """
+    assert parse_listing_html(html) == [
+        "https://finki.ukim.mk/kadar/full/",
+        "https://finki.ukim.mk/kadar/empty/",
+    ]
 
 
 def test_parse_professor_html_extracts_name_content_and_email():
@@ -27,7 +42,7 @@ def test_scrape_professors_skips_empty_bios():
     with (
         patch.object(professors, "make_client"),
         patch.object(professors, "get") as mock_get,
-        patch.object(professors, "parse_sitemap_xml", return_value=fake_urls),
+        patch.object(professors, "parse_listing_html", return_value=fake_urls),
         patch.object(
             professors,
             "parse_professor_html",
