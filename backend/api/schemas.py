@@ -98,11 +98,6 @@ class QuizQuestion(BaseModel):
     explanation: str
 
 
-class QuizGenerateRequest(BaseModel):
-    course_query: str
-    num_questions: int = 5
-
-
 class QuizResponse(BaseModel):
     questions: list[QuizQuestion]
     source_titles: list[str]

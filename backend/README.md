@@ -14,10 +14,11 @@ FastAPI app, scrapers, ingestion/RAG pipeline, MCP servers, notifier, and quiz l
 | `ingestion/` | Chunking, local embeddings (BGE-M3), pgvector indexing |
 | `mcp_servers/` | `official_mcp/` and `finki_hub_mcp/` — thin tool layers over `core/retrieval.py` |
 | `notifier/` | Subscription management, filter-matching diff, SMTP sending |
-| `quiz/` | LLM quiz generation (RAG-based and upload-based) + PDF/PPTX text extraction |
+| `quiz/` | LLM quiz generation from an uploaded PDF/PPTX + text extraction (upload-only — see root README's "Where the LLM is used") |
 | `models.py`, `db.py` | SQLAlchemy models and session setup |
 | `alembic/` | DB migrations |
 | `scheduler.py` | Periodic scrape → index → notify job (APScheduler) |
+| `scripts/` | `reindex.py` (manual scrape + index), `seed.py`/`export_seed.py` (fast offline bootstrap from `seed/documents.json` — see "First time on a new machine" in the root README) |
 | `tests/` | Unit tests — pure-logic and fixture-based, no live network or DB required |
 
 ## Local dev (without Docker)
@@ -36,6 +37,14 @@ Run the test suite (no live services needed):
 
 ```bash
 pytest backend/tests
+```
+
+Populate the database (fast, offline, no live scraping) from the bundled seed —
+this is the recommended way to bootstrap a fresh Postgres, and is what a new machine
+should run first (see "First time on a new machine" in the root README):
+
+```bash
+python -m backend.scripts.seed
 ```
 
 Run an MCP server standalone (e.g. to point Claude Desktop or an MCP inspector at it):
@@ -72,6 +81,27 @@ A full reindex (no `cadence`, or the CLI script with no argument) runs both and 
 as long as the slow pass does. None of this is something a site visitor ever waits
 through either way — `/search`, `/chat`, and the MCP tools only ever read whatever's
 already indexed, regardless of what's running in the background.
+
+## The seed (`seed/documents.json`)
+
+A committed JSON snapshot of the `documents` table — title/url/content/metadata for
+everything that was indexed at export time, deliberately **without** chunk
+embeddings (they're cheap and fast to regenerate locally, ~2 minutes for everything
+currently seeded, and re-deriving them avoids shipping vectors tied to a specific
+embedding model version).
+
+- `python -m backend.scripts.seed` loads it: chunks + embeds + upserts everything
+  locally, no network calls to finki.ukim.mk/finki-hub.com at all. This is how a new
+  machine should bootstrap instead of waiting on a live scrape.
+- `python -m backend.scripts.export_seed` regenerates it from whatever's currently in
+  the DB. Maintainer-only, manual — run it after a full reindex and commit the
+  result if you want future first-time setups to start from fresher data. It's a
+  snapshot, not a sync: it will drift stale between refreshes, which is fine, since
+  the seed's job is a fast bootstrap, not a freshness guarantee — live scraping
+  (scheduler or manual reindex) is what keeps things current after setup.
+- Both go through the same `ingest_normalized_document` upsert path a live scrape
+  does (matched by URL, unchanged content skipped), so seeding, reindexing, and
+  re-seeding in any order/combination is safe and idempotent.
 
 ## Exam-session schedules
 

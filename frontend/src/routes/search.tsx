@@ -2,7 +2,23 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { apiGet, type SearchResult } from "@/lib/api";
 import { Notice, Page } from "@/components/Page";
-import { useI18n } from "@/lib/i18n";
+import { useI18n, type TKey } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
+
+const TYPE_LABEL_KEYS: Record<string, TKey> = {
+  announcement: "type_announcement",
+  course: "type_course",
+  professor: "type_professor",
+  staff: "type_staff",
+  material: "type_material",
+  schedule: "type_schedule",
+  thesis: "type_thesis",
+};
+
+function typeLabel(type: string, t: (k: TKey) => string): string {
+  const key = TYPE_LABEL_KEYS[type];
+  return key ? t(key) : type;
+}
 
 type SearchSearch = { q?: string | undefined; source?: string | undefined };
 
@@ -44,6 +60,16 @@ function SearchPage() {
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set());
+
+  function toggleType(type: string) {
+    setActiveTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  }
 
   // The query itself lives in the URL, not just component state — so it survives a
   // page refresh, and browser back/forward after opening a result restores the exact
@@ -54,6 +80,7 @@ function SearchPage() {
     setSource(urlSource ?? "");
     if (!urlQ) {
       setResults(null);
+      setActiveTypes(new Set());
       return;
     }
     let cancelled = false;
@@ -63,7 +90,10 @@ function SearchPage() {
     if (urlSource) params.set("source", urlSource);
     apiGet<SearchResult[]>(`/search?${params.toString()}`)
       .then((r) => {
-        if (!cancelled) setResults(r);
+        if (!cancelled) {
+          setResults(r);
+          setActiveTypes(new Set());
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -112,6 +142,37 @@ function SearchPage() {
         </button>
       </form>
 
+      {results && results.length > 0
+        ? (() => {
+            const typeCounts = new Map<string, number>();
+            for (const r of results) typeCounts.set(r.type, (typeCounts.get(r.type) ?? 0) + 1);
+            const types = Array.from(typeCounts.keys()).sort();
+            if (types.length < 2) return null;
+            return (
+              <div className="mt-4 flex flex-wrap gap-1.5">
+                <span className="self-center pr-1 text-xs text-muted-foreground">
+                  {t("filter_by_type")}:
+                </span>
+                {types.map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => toggleType(type)}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                      activeTypes.has(type)
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-card text-muted-foreground hover:bg-accent",
+                    )}
+                  >
+                    {typeLabel(type, t)} ({typeCounts.get(type)})
+                  </button>
+                ))}
+              </div>
+            );
+          })()
+        : null}
+
       <div className="mt-6 space-y-3">
         {loading ? <Notice kind="info">{t("loading")}</Notice> : null}
         {error ? (
@@ -122,40 +183,47 @@ function SearchPage() {
         {results && results.length === 0 && !loading ? (
           <Notice kind="info">{t("no_results")}</Notice>
         ) : null}
-        {results?.map((r) => {
-          const internal = r.source === "finki_hub" && r.type === "course";
-          const date = fmtDate(r.published_at);
-          return (
-            <article
-              key={`${r.document_id}-${r.chunk_text.slice(0, 12)}`}
-              className="rounded-lg border border-border bg-card p-4"
-            >
-              {internal ? (
-                <Link
-                  to="/documents/$id"
-                  params={{ id: r.document_id }}
-                  className="text-sm font-medium text-primary hover:underline"
-                >
-                  {r.title}
-                </Link>
-              ) : (
-                <a
-                  href={r.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-sm font-medium text-primary hover:underline"
-                >
-                  {r.title}
-                </a>
-              )}
-              <p className="mt-1 text-xs text-muted-foreground">
-                {r.source} · {r.type}
-                {date ? ` · ${date}` : ""}
-              </p>
-              <p className="mt-2 text-sm text-muted-foreground">{r.chunk_text}</p>
-            </article>
-          );
-        })}
+        {results &&
+        activeTypes.size > 0 &&
+        results.filter((r) => activeTypes.has(r.type)).length === 0 ? (
+          <Notice kind="info">{t("no_results")}</Notice>
+        ) : null}
+        {results
+          ?.filter((r) => activeTypes.size === 0 || activeTypes.has(r.type))
+          .map((r) => {
+            const internal = r.source === "finki_hub" && r.type === "course";
+            const date = fmtDate(r.published_at);
+            return (
+              <article
+                key={`${r.document_id}-${r.chunk_text.slice(0, 12)}`}
+                className="rounded-lg border border-border bg-card p-4"
+              >
+                {internal ? (
+                  <Link
+                    to="/documents/$id"
+                    params={{ id: r.document_id }}
+                    className="text-sm font-medium text-primary hover:underline"
+                  >
+                    {r.title}
+                  </Link>
+                ) : (
+                  <a
+                    href={r.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm font-medium text-primary hover:underline"
+                  >
+                    {r.title}
+                  </a>
+                )}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {r.source} · {r.type}
+                  {date ? ` · ${date}` : ""}
+                </p>
+                <p className="mt-2 text-sm text-muted-foreground">{r.chunk_text}</p>
+              </article>
+            );
+          })}
       </div>
     </Page>
   );

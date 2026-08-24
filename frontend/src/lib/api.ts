@@ -58,6 +58,7 @@ export type Accreditation = {
   year?: string;
   official_url?: string;
   prerequisite_links?: PrerequisiteLink[];
+  programs?: Record<string, string>;
   [key: string]: unknown;
 };
 

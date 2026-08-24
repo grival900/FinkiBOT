@@ -18,11 +18,11 @@ SYSTEM_PROMPT = (
     "You are FinkiBOT, an assistant for students at FINKI (Faculty of Computer Science "
     "and Engineering, Skopje). You receive context snippets retrieved from finki.ukim.mk "
     "and finki-hub.com alongside each question.\n\n"
-    "When the context is relevant to the student's question, base your answer on it and "
-    "cite sources by including their URLs. When the context is not relevant — for example, "
-    "general knowledge questions about programming concepts, mathematics, science, or other "
-    "non-FINKI-specific topics — answer from your own general knowledge without claiming "
-    "the information is unavailable.\n\n"
+    "When the context is relevant to the student's question, base your answer on it. When "
+    "the context is not relevant — for example, general knowledge questions about "
+    "programming concepts, mathematics, science, or other non-FINKI-specific topics — "
+    "answer from your own general knowledge without claiming the information is "
+    "unavailable.\n\n"
     "Never fabricate FINKI-specific information (course details, professor names, exam "
     "schedules, deadlines, enrollment rules) from general knowledge — only state FINKI "
     "facts that appear in the provided context. If a FINKI-specific question has no "
@@ -32,8 +32,29 @@ SYSTEM_PROMPT = (
     "we don't have the file contents, only the link. When a schedule entry's title matches "
     "what the student is asking about (e.g. they ask about the June exam session and a "
     "schedule entry is titled 'јунска испитна сесија'), say you don't have the exact dates "
-    "but give them that specific link — don't substitute a less relevant schedule link just "
+    "but mention that specific entry — don't substitute a less relevant schedule entry just "
     "because it's also present in the context.\n\n"
+    "Don't write a source list or any URLs/links yourself — the app appends an accurate "
+    "source list automatically after your answer, from the same context you were given. "
+    "Referring to a source by name in prose (e.g. \"according to the official course "
+    "page...\") is fine, but never write out a URL or a markdown link.\n\n"
+    "Format every answer as markdown: use **bold** for labels and key terms, bullet lists "
+    "for multiple facts, and blank lines between paragraphs — never a single wall of text.\n\n"
+    "When the question is clearly about one specific course, structure the answer as:\n"
+    "### <course name>\n"
+    "then a bullet list of the key facts actually present in the context (code, "
+    "level/semester, ECTS credits, prerequisites, professors/assistants, accreditation "
+    "programs — skip whatever you don't have, don't pad with 'N/A'), followed by a short "
+    "paragraph for anything else worth saying (e.g. syllabus content, learning "
+    "objectives).\n\n"
+    "When the question is clearly about one specific professor, structure the answer as:\n"
+    "### <professor name>\n"
+    "then a bullet list of the key facts actually present (title/position, email, cabinet, "
+    "consultations), followed by a short paragraph summarizing their bio/publications if "
+    "present in the context.\n\n"
+    "For anything else (announcements, general questions, multi-course comparisons), just "
+    "use clear markdown prose/lists — the header+bullet template above is specifically for "
+    "single-course and single-professor questions.\n\n"
     "Keep answers concise and scannable: lead with the direct answer, don't restate the "
     "question, and don't pad with filler or repeat the same point across sources. It's fine "
     "to be longer when the question genuinely calls for it (e.g. summarizing a professor's "
@@ -43,12 +64,16 @@ SYSTEM_PROMPT = (
 
 
 def citation_url(result: SearchResult) -> str:
-    """finki_hub course pages have no stable per-course route to cite — clicking a row
-    on predmeti.finki-hub.com never changes the URL (it's a client-side modal, not a
-    real route), so any URL we hand the LLM for one only ever lands on the generic
-    listing page, not the specific course. Cite our own document page instead, which
-    reliably shows the same details (and is what /search already links to for these)."""
+    """Prefer a real external URL when we have one. finki_hub course pages have no
+    stable per-course route to cite directly — clicking a row on predmeti.finki-hub.com
+    never changes the URL (it's a client-side modal, not a real route) — but the
+    document's metadata often already carries the actual official syllabus URL
+    (captured from the accreditation data), which is worth citing over our own page
+    when it exists; only fall back to our internal page when it doesn't."""
     if result.source == "finki_hub" and result.type == "course":
+        official_url = result.metadata.get("official_subject_url")
+        if official_url:
+            return official_url
         return f"{settings.frontend_origin}/documents/{result.document_id}"
     return result.url
 
@@ -61,6 +86,22 @@ def build_context(results: list[SearchResult]) -> str:
         date = r.published_at.date().isoformat() if r.published_at else "n/a"
         blocks.append(f"[{r.title}] (type: {r.type}, url: {citation_url(r)}, date: {date})\n{r.chunk_text}")
     return "\n\n---\n\n".join(blocks)
+
+
+def build_sources_block(results: list[SearchResult]) -> str:
+    """Built here instead of left to the LLM: guarantees every link is well-formed and
+    points at the right place (see `citation_url`), and keeps identical questions from
+    getting a differently-formatted source list each time."""
+    seen: set[str] = set()
+    lines: list[str] = []
+    for r in results:
+        if r.document_id in seen:
+            continue
+        seen.add(r.document_id)
+        lines.append(f"- [{r.title}]({citation_url(r)})")
+    if not lines:
+        return ""
+    return "\n\n---\n\n**Извори:**\n" + "\n".join(lines)
 
 
 def _gemini_role(role: str) -> str:
@@ -90,10 +131,15 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingRespon
         stream = client.models.generate_content_stream(
             model=settings.llm_model,
             contents=contents,
-            config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, max_output_tokens=2048),
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                max_output_tokens=4096,
+                temperature=0.2,
+            ),
         )
         for chunk in stream:
             if chunk.text:
                 yield chunk.text
+        yield build_sources_block(results)
 
     return StreamingResponse(event_stream(), media_type="text/plain")

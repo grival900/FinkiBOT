@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { apiPost, apiPostForm, type QuizResponse } from "@/lib/api";
+import { apiPostForm, type QuizResponse } from "@/lib/api";
 import { Notice, Page } from "@/components/Page";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -11,8 +11,7 @@ export const Route = createFileRoute("/quiz")({
       { title: "Квиз генератор — FinkiBOT" },
       {
         name: "description",
-        content:
-          "Генерирај квиз со прашања од предмет на ФИНКИ или од сопствен PDF/PPTX материјал.",
+        content: "Генерирај квиз со прашања од сопствен PDF/PPTX материјал.",
       },
       { property: "og:title", content: "Квиз генератор — FinkiBOT" },
       {
@@ -26,8 +25,6 @@ export const Route = createFileRoute("/quiz")({
 
 function QuizPage() {
   const { t } = useI18n();
-  const [mode, setMode] = useState<"course" | "upload">("course");
-  const [courseQuery, setCourseQuery] = useState("");
   const [num, setNum] = useState(5);
   const [file, setFile] = useState<File | null>(null);
   const [quiz, setQuiz] = useState<QuizResponse | null>(null);
@@ -38,26 +35,17 @@ function QuizPage() {
 
   async function generate(e: React.FormEvent) {
     e.preventDefault();
+    if (!file) return;
     setLoading(true);
     setError(null);
     setQuiz(null);
     setPicks({});
     setChecked(false);
     try {
-      if (mode === "course") {
-        setQuiz(
-          await apiPost<QuizResponse>("/quiz/generate", {
-            course_query: courseQuery,
-            num_questions: num,
-          }),
-        );
-      } else {
-        if (!file) throw new Error("PDF / PPTX");
-        const fd = new FormData();
-        fd.append("file", file);
-        fd.append("num_questions", String(num));
-        setQuiz(await apiPostForm<QuizResponse>("/quiz/upload", fd));
-      }
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("num_questions", String(num));
+      setQuiz(await apiPostForm<QuizResponse>("/quiz/upload", fd));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -67,44 +55,17 @@ function QuizPage() {
 
   return (
     <Page title={t("nav_quiz")}>
-      <div className="mb-4 inline-flex rounded-md border border-border p-0.5">
-        {(["course", "upload"] as const).map((m) => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
-            className={cn(
-              "rounded px-3 py-1.5 text-sm transition-colors",
-              mode === m ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-accent",
-            )}
-          >
-            {m === "course" ? t("quiz_from_course") : t("quiz_upload")}
-          </button>
-        ))}
-      </div>
-
       <form onSubmit={generate} className="flex flex-wrap items-end gap-2">
-        {mode === "course" ? (
-          <label className="min-w-60 flex-1">
-            <span className="mb-1 block text-xs text-muted-foreground">{t("course_query")}</span>
-            <input
-              value={courseQuery}
-              onChange={(e) => setCourseQuery(e.target.value)}
-              required
-              className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-ring"
-            />
-          </label>
-        ) : (
-          <label className="min-w-60 flex-1">
-            <span className="mb-1 block text-xs text-muted-foreground">PDF / PPTX</span>
-            <input
-              type="file"
-              accept=".pdf,.pptx"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              required
-              className="w-full rounded-md border border-input bg-card px-3 py-1.5 text-sm"
-            />
-          </label>
-        )}
+        <label className="min-w-60 flex-1">
+          <span className="mb-1 block text-xs text-muted-foreground">{t("quiz_upload")}</span>
+          <input
+            type="file"
+            accept=".pdf,.pptx"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            required
+            className="w-full rounded-md border border-input bg-card px-3 py-1.5 text-sm"
+          />
+        </label>
         <label className="w-40">
           <span className="mb-1 block text-xs text-muted-foreground">{t("num_questions")}</span>
           <input

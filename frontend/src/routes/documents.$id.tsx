@@ -22,7 +22,7 @@ export const Route = createFileRoute("/documents/$id")({
   component: DocumentPage,
 });
 
-const SKIP_KEYS = new Set(["year", "official_url", "prerequisite_links"]);
+const SKIP_KEYS = new Set(["year", "official_url", "prerequisite_links", "programs"]);
 
 function Chips({ label, items }: { label: string; items?: string[] | undefined }) {
   if (!items || items.length === 0) return null;
@@ -42,6 +42,32 @@ function Chips({ label, items }: { label: string; items?: string[] | undefined }
         ))}
       </div>
     </div>
+  );
+}
+
+function Programs({ programs }: { programs?: Record<string, string> | undefined }) {
+  if (!programs || Object.keys(programs).length === 0) return null;
+  const mandatory = Object.entries(programs)
+    .filter(([, status]) => status === "задолжителен")
+    .map(([program]) => program);
+  const elective = Object.entries(programs)
+    .filter(([, status]) => status !== "задолжителен")
+    .map(([program]) => program);
+  return (
+    <>
+      {mandatory.length > 0 ? (
+        <div className="flex gap-2">
+          <dt className="w-28 shrink-0 text-xs text-muted-foreground">Задолжителен за</dt>
+          <dd className="flex-1">{mandatory.join(", ")}</dd>
+        </div>
+      ) : null}
+      {elective.length > 0 ? (
+        <div className="flex gap-2">
+          <dt className="w-28 shrink-0 text-xs text-muted-foreground">Изборен за</dt>
+          <dd className="flex-1">{elective.join(", ")}</dd>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -183,6 +209,7 @@ function DocumentPage() {
                     </dd>
                   </div>
                 ) : null}
+                <Programs programs={acc.programs} />
               </dl>
             </div>
           ))}

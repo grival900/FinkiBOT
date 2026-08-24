@@ -6,7 +6,7 @@ store (Postgres + pgvector), and gives students a few ways to use it:
 
 - **Chat** — ask a question, get a cited answer grounded in what's actually indexed
 - **Search** — raw ranked results instead of an LLM-written answer
-- **Quiz maker** — generates quiz questions from a course or an uploaded PDF/PPTX
+- **Quiz maker** — generates quiz questions from an uploaded PDF/PPTX
 - **Subscribe** — email alerts when new announcements match your keywords/courses
 - **MCP tools playground** — the same tools an MCP client (e.g. Claude Desktop) can
   call, runnable/inspectable directly on the site
@@ -32,7 +32,7 @@ For module-by-module detail, non-Docker local dev, and known scraper gaps, see
 That's it — everything else (Postgres, the embedding model, Node, Python) runs inside
 containers.
 
-## Getting started (first time)
+## Getting started — first time on a new machine
 
 Run these in order from the repo root:
 
@@ -45,19 +45,28 @@ docker compose up --build
 ```
 
 Leave that running in one terminal. In a second terminal, populate the database —
-it starts empty, so nothing will show up in chat/search until you run this:
+it starts empty on a brand-new machine, so nothing will show up in chat/search until
+you load some data. Two ways to do that:
 
 ```bash
-# 3. Scrape + index the cheap/time-sensitive sources first (well under a minute) —
-#    announcements + finki-hub's courses/staff/sessions JSON feeds
-docker compose exec backend python -m backend.scripts.reindex frequent
-
-# 4. Then the slower sources (official course syllabi, professor profiles,
-#    finki-hub recordings — one HTTP request per item, several minutes)
-docker compose exec backend python -m backend.scripts.reindex slow
+# 3. Fast path (recommended): load the bundled seed — no live scraping, no requests
+#    to finki.ukim.mk/finki-hub.com at all, done in about 2 minutes
+docker compose exec backend python -m backend.scripts.seed
 ```
 
-(Or just `python -m backend.scripts.reindex` with no argument for both at once.)
+The seed (`backend/seed/documents.json`) is a snapshot taken at some point in the
+past, so it may be missing the newest announcements — that's expected, not a bug.
+Once the scheduler is on (or you run a manual reindex, see "Day-to-day" below) it
+catches up to live data on top of the seed.
+
+```bash
+# Alternative: skip the seed and scrape live instead — cheap/time-sensitive sources
+# first (well under a minute)...
+docker compose exec backend python -m backend.scripts.reindex frequent
+# ...then the expensive ones: official course syllabi, professor profiles, finki-hub
+# recordings — one HTTP request per item each, several minutes
+docker compose exec backend python -m backend.scripts.reindex slow
+```
 
 That's the whole setup. Once it finishes, open:
 
@@ -74,9 +83,7 @@ Optionally, confirm the backend tests pass:
 docker compose exec backend pytest backend/tests
 ```
 
-## Day-to-day
-
-Once the one-time setup above is done, this is all you need:
+## Day-to-day (after the first-time setup above)
 
 ```bash
 docker compose up -d      # start everything (no --build needed unless you changed
@@ -87,15 +94,30 @@ docker compose down       # stop everything — your data is untouched (see belo
 Both backend and frontend are bind-mounted with hot reload already wired up, so
 editing code and saving just works — no rebuild, no restart.
 
-Your scraped data persists in a Docker volume, not in the containers, so
-`docker compose down` / `up` won't lose it. Re-run the reindex whenever you want
-fresh data (new announcements, updated course info) — it doesn't happen
-automatically in dev (`ENABLE_SCHEDULER=false` in `.env`; when enabled, frequent
-sources refresh hourly and slow ones weekly by default — see `backend/README.md`):
+**Does my data survive a restart?** Yes. Scraped documents live in a named Docker
+volume (`finkibot_pgdata`), completely separate from the containers themselves —
+`docker compose down` / `up`, restarting Docker Desktop, even rebuilding the images,
+none of that touches it. Nothing re-scrapes or reseeds automatically on startup. The
+*only* things that lose it are `docker compose down -v` (the `-v` explicitly deletes
+volumes), manually removing the volume, or a fresh clone on a different machine —
+that last one is exactly what the seed/reindex step above is for.
+
+Re-run the reindex whenever you want fresh data (new announcements, updated course
+info) — it doesn't happen automatically in dev (`ENABLE_SCHEDULER=false` in `.env`;
+when enabled, frequent sources refresh hourly and slow ones weekly by default — see
+`backend/README.md`):
 
 ```bash
 docker compose exec backend python -m backend.scripts.reindex frequent  # seconds
 docker compose exec backend python -m backend.scripts.reindex slow      # minutes
+```
+
+If you've built up a lot of fresh content and want to refresh the bundled seed so
+future first-time setups start closer to current (maintainers only — this rewrites
+`backend/seed/documents.json`, commit it like any other change):
+
+```bash
+docker compose exec backend python -m backend.scripts.export_seed
 ```
 
 Other useful commands:
@@ -121,8 +143,10 @@ docker compose up -d --build       # rebuild after touching Dockerfile/requireme
 
 1. **Chat** (`/chat`) — retrieves top-k matching chunks, sends them + your question to
    Gemini in one call, streams back a cited answer.
-2. **Quiz generation** (`/quiz/generate`, `/quiz/upload`) — turns retrieved course
-   content or an uploaded file into structured quiz questions.
+2. **Quiz generation** (`/quiz/upload`) — turns an uploaded PDF/PPTX into structured
+   quiz questions. Deliberately upload-only, not RAG-based off indexed content —
+   the scrapers only cover public metadata (course names/tags, announcements), not
+   actual lecture material, so course-based quizzes were too shallow to be useful.
 3. **Embeddings** — a local model (`BAAI/bge-m3`), not an API call, since content is
    mostly Macedonian and this avoids per-embedding cost.
 
