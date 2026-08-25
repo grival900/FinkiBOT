@@ -19,6 +19,19 @@ const Ctx = createContext<AuthState>({
 
 const STORAGE_KEY = "finkibot-token";
 
+// Set once a visitor picks "Continue as guest" on the login gate (see AuthGate.tsx) so
+// they aren't sent back to /login on every future visit — chat/search/quiz/subscribe
+// have never required an account, this only gates the very first landing.
+const GUEST_KEY = "finkibot-guest";
+
+export function continueAsGuest() {
+  localStorage.setItem(GUEST_KEY, "1");
+}
+
+export function isGuest(): boolean {
+  return typeof localStorage !== "undefined" && localStorage.getItem(GUEST_KEY) === "1";
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);

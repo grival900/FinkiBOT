@@ -49,8 +49,8 @@ function ResetPasswordPage() {
 
   return (
     <Page title={t("reset_password")}>
-      <form onSubmit={submit} className="max-w-sm space-y-4">
-        <label className="block">
+      <form onSubmit={submit} className="mx-auto flex max-w-sm flex-col items-center gap-4">
+        <label className="block w-full">
           <span className="mb-1 block text-xs text-muted-foreground">{t("new_password")}</span>
           <input
             type="password"

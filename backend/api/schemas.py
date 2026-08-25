@@ -69,6 +69,11 @@ class SemesterCount(BaseModel):
     count: int
 
 
+class CourseCodeOption(BaseModel):
+    code: str
+    name: str
+
+
 class InsightsOut(BaseModel):
     documents_by_type: list[DocTypeCount]
     announcements_by_month: list[MonthCount]

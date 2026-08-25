@@ -26,9 +26,11 @@ export const Route = createFileRoute("/insights")({
 function BarSection({ title, data }: { title: string; data: { label: string; count: number }[] }) {
   const max = Math.max(1, ...data.map((d) => d.count));
   return (
-    <section className="rounded-lg border border-border bg-card p-4">
+    <section className="mb-4 break-inside-avoid rounded-lg border border-border bg-card p-4">
       <h2 className="mb-3 text-sm font-semibold">{title}</h2>
-      <div className="space-y-2">
+      {/* Capped + scrollable: some charts (e.g. announcements by month) grow unbounded
+          over time and would otherwise dominate the whole layout on their own. */}
+      <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
         {data.length === 0 ? <p className="text-xs text-muted-foreground">—</p> : null}
         {data.map((d) => (
           <div key={d.label} className="flex items-center gap-3 text-xs">
@@ -73,7 +75,7 @@ function InsightsPage() {
         </Notice>
       ) : null}
       {data ? (
-        <div className="grid items-start gap-4 lg:grid-cols-2">
+        <div className="columns-1 gap-4 lg:columns-2">
           <BarSection
             title={t("insights_docs")}
             data={data.documents_by_type.map((d) => ({

@@ -1,4 +1,4 @@
-from backend.core.insights import count_semesters, count_tags
+from backend.core.insights import build_course_code_options, count_semesters, count_tags
 
 
 def test_count_tags_ranks_by_frequency():
@@ -40,3 +40,31 @@ def test_count_semesters_sorts_numerically_not_lexically():
         {"accreditations": [{"Семестар": "2"}]},
     ]
     assert [s["semester"] for s in count_semesters(metadata_list)] == ["2", "10"]
+
+
+def test_build_course_code_options_uses_most_recent_accreditation_only():
+    rows = [
+        ("Бази на податоци", {"accreditations": [{"Код": "F23L3W004"}, {"Код": "F18L3W004"}]}),
+        ("Веб системи", {"accreditations": [{"Код": "F23L2S061"}]}),
+    ]
+    assert build_course_code_options(rows) == [
+        {"code": "F23L3W004", "name": "Бази на податоци"},
+        {"code": "F23L2S061", "name": "Веб системи"},
+    ]
+
+
+def test_build_course_code_options_sorts_by_name():
+    rows = [
+        ("Веб системи", {"accreditations": [{"Код": "F23L2S061"}]}),
+        ("Бази на податоци", {"accreditations": [{"Код": "F23L3W004"}]}),
+    ]
+    assert [o["name"] for o in build_course_code_options(rows)] == ["Бази на податоци", "Веб системи"]
+
+
+def test_build_course_code_options_skips_courses_without_a_code():
+    rows = [
+        ("Без код", {"accreditations": [{"Семестар": "5"}]}),  # accreditation present, no "Код" key
+        ("Без акредитации", {"accreditations": []}),
+        ("Без метаподатоци", {}),
+    ]
+    assert build_course_code_options(rows) == []

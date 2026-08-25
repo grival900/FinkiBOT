@@ -63,7 +63,7 @@ function QuizPage() {
             accept=".pdf,.pptx"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             required
-            className="w-full rounded-md border border-input bg-card px-3 py-1.5 text-sm"
+            className="h-9 w-full rounded-md border border-input bg-card px-3 py-1.5 text-sm"
           />
         </label>
         <label className="w-40">
@@ -74,7 +74,7 @@ function QuizPage() {
             max={20}
             value={num}
             onChange={(e) => setNum(Number(e.target.value))}
-            className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-ring"
+            className="h-9 w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-ring"
           />
         </label>
         <button

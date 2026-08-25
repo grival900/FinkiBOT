@@ -13,7 +13,8 @@ import appCss from "../styles.css?url";
 import { ThemeProvider } from "../lib/theme";
 import { I18nProvider } from "../lib/i18n";
 import { AuthProvider } from "../lib/auth";
-import { Sidebar } from "../components/Sidebar";
+import { AuthGate } from "../components/AuthGate";
+import { AppShell } from "../components/AppShell";
 
 function NotFoundComponent() {
   return (
@@ -128,13 +129,11 @@ function RootComponent() {
       <ThemeProvider>
         <I18nProvider>
           <AuthProvider>
-            <div className="flex h-screen overflow-hidden bg-background text-foreground">
-              <Sidebar />
-              <main className="min-w-0 flex-1 overflow-y-auto">
-                {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-                <Outlet />
-              </main>
-            </div>
+            <AuthGate />
+            <AppShell>
+              {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+              <Outlet />
+            </AppShell>
           </AuthProvider>
         </I18nProvider>
       </ThemeProvider>

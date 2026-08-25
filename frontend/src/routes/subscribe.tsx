@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
-import { apiPost } from "@/lib/api";
+import { apiGet, apiPost, type CourseCodeOption } from "@/lib/api";
+import { CourseCodeCombobox } from "@/components/CourseCodeCombobox";
 import { Notice, Page } from "@/components/Page";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
@@ -88,6 +89,7 @@ function SubscribePage() {
   const [emailTouched, setEmailTouched] = useState(false);
   const [keywords, setKeywords] = useState<string[]>([]);
   const [codes, setCodes] = useState<string[]>([]);
+  const [courseOptions, setCourseOptions] = useState<CourseCodeOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -97,6 +99,12 @@ function SubscribePage() {
   useEffect(() => {
     if (user?.email && !emailTouched) setEmail(user.email);
   }, [user?.email, emailTouched]);
+
+  useEffect(() => {
+    apiGet<CourseCodeOption[]>("/courses/codes")
+      .then(setCourseOptions)
+      .catch(() => setCourseOptions([])); // non-fatal — the rest of the form still works
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -139,12 +147,16 @@ function SubscribePage() {
           onChange={setKeywords}
           addLabel={t("add")}
         />
-        <TokenInput
-          label={t("course_codes")}
-          values={codes}
-          onChange={setCodes}
-          addLabel={t("add")}
-        />
+        <div>
+          <span className="mb-1 block text-xs text-muted-foreground">{t("course_codes")}</span>
+          <CourseCodeCombobox
+            values={codes}
+            onChange={setCodes}
+            options={courseOptions}
+            placeholder={t("select_course_codes")}
+            emptyLabel={t("no_courses_found")}
+          />
+        </div>
         <button
           type="submit"
           disabled={loading}
