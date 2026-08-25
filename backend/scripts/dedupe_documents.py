@@ -64,8 +64,51 @@ def dedupe(dry_run: bool = False) -> int:
     return removed
 
 
+def find_superseded_subject_docs(db) -> list[Document]:
+    """`official.subjects` only ever scrapes each course's *latest*-accreditation-year
+    syllabus URL going forward (see its docstring) — but scrapers only ever add/update,
+    never delete, so when a course's "latest" year moves on (e.g. 2018 -> 2023), the
+    older year's page stays indexed forever: a second, outdated "duplicate" of the same
+    course showing up alongside the current one in search (confirmed live: "Бази на
+    податоци" had both its 2018 and 2023 syllabus pages indexed simultaneously).
+
+    Deliberately conservative: only flags a document whose URL isn't any course's
+    current "latest" reference *and* whose title is already covered by another
+    document that is — never removes a course's only indexed syllabus, even one whose
+    URL happens not to be in the current set (e.g. a renamed/discontinued course
+    finki_hub no longer references), since that would be real content loss, not
+    cleanup. Out of 162 non-current official/course docs seen when this was written,
+    16 had no such replacement and were correctly left untouched."""
+    current_urls = {
+        (metadata or {}).get("official_subject_url")
+        for (metadata,) in db.query(Document.doc_metadata).filter(
+            Document.source == "finki_hub", Document.type == "course"
+        )
+    }
+    current_urls.discard(None)
+
+    docs = db.query(Document).filter(Document.source == "official", Document.type == "course").all()
+    current_titles = {d.title for d in docs if d.url in current_urls}
+
+    return [d for d in docs if d.url not in current_urls and d.title in current_titles]
+
+
+def dedupe_superseded_subjects(dry_run: bool = False) -> int:
+    removed = 0
+    with SessionLocal() as db:
+        for doc in find_superseded_subject_docs(db):
+            print(f"  superseded subject page: removing {doc.url!r} ({doc.title!r})")
+            if not dry_run:
+                db.delete(doc)
+            removed += 1
+        if not dry_run:
+            db.commit()
+    return removed
+
+
 if __name__ == "__main__":
     dry_run = "--dry-run" in sys.argv
-    n = dedupe(dry_run=dry_run)
+    n_dupes = dedupe(dry_run=dry_run)
+    n_superseded = dedupe_superseded_subjects(dry_run=dry_run)
     verb = "Would remove" if dry_run else "Removed"
-    print(f"{verb} {n} duplicate document(s).")
+    print(f"{verb} {n_dupes} duplicate document(s) and {n_superseded} superseded subject page(s).")

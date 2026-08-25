@@ -1,11 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
-import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { streamChat, type ChatMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
+import { Markdown } from "@/components/Markdown";
 import { Notice } from "@/components/Page";
 import {
   loadConversations,
@@ -13,41 +12,6 @@ import {
   saveConversations,
   type Conversation,
 } from "@/lib/chat-history";
-
-// The backend replies in markdown (headers, bold, bullet lists, a trailing source
-// list) — render it as such instead of dumping raw "**text**"/"### heading" syntax
-// on screen. Component overrides just apply the app's existing spacing/color tokens
-// since there's no @tailwindcss/typography plugin installed.
-const markdownComponents: Components = {
-  a: ({ href, children }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-primary underline underline-offset-2 hover:opacity-80"
-    >
-      {children}
-    </a>
-  ),
-  h1: ({ children }) => <h3 className="mt-3 mb-1.5 text-base font-semibold first:mt-0">{children}</h3>,
-  h2: ({ children }) => <h3 className="mt-3 mb-1.5 text-base font-semibold first:mt-0">{children}</h3>,
-  h3: ({ children }) => <h3 className="mt-3 mb-1.5 text-base font-semibold first:mt-0">{children}</h3>,
-  p: ({ children }) => <p className="mb-2 leading-relaxed last:mb-0">{children}</p>,
-  ul: ({ children }) => <ul className="mb-2 ml-4 list-disc space-y-0.5 last:mb-0">{children}</ul>,
-  ol: ({ children }) => <ol className="mb-2 ml-4 list-decimal space-y-0.5 last:mb-0">{children}</ol>,
-  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-  hr: () => <hr className="my-3 border-border" />,
-  code: ({ children }) => <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{children}</code>,
-};
-
-function ChatMessageContent({ content }: { content: string }) {
-  return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-      {content}
-    </ReactMarkdown>
-  );
-}
 
 type ChatSearch = { c?: string | undefined; new?: number | undefined };
 
@@ -168,7 +132,7 @@ function ChatPage() {
                       m.role === "user" ? (
                         m.content
                       ) : (
-                        <ChatMessageContent content={m.content} />
+                        <Markdown content={m.content} />
                       )
                     ) : loading ? (
                       "…"

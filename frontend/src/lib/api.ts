@@ -90,6 +90,8 @@ export type SearchResult = {
   score: number;
 };
 
+export type CourseCodeOption = { code: string; name: string };
+
 export type PrerequisiteLink = { text: string; document_id: string | null };
 
 export type Accreditation = {

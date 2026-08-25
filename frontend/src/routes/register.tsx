@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { Notice, Page } from "@/components/Page";
 import { useI18n } from "@/lib/i18n";
-import { useAuth } from "@/lib/auth";
+import { continueAsGuest, useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/register")({
   head: () => ({
@@ -34,10 +34,15 @@ function RegisterPage() {
     }
   }
 
+  function guest() {
+    continueAsGuest();
+    navigate({ to: "/" });
+  }
+
   return (
     <Page title={t("register")}>
-      <form onSubmit={submit} className="max-w-sm space-y-4">
-        <label className="block">
+      <form onSubmit={submit} className="mx-auto flex max-w-sm flex-col items-center gap-4">
+        <label className="block w-full">
           <span className="mb-1 block text-xs text-muted-foreground">{t("email")}</span>
           <input
             type="email"
@@ -47,7 +52,7 @@ function RegisterPage() {
             className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-ring"
           />
         </label>
-        <label className="block">
+        <label className="block w-full">
           <span className="mb-1 block text-xs text-muted-foreground">{t("password")}</span>
           <input
             type="password"
@@ -79,6 +84,10 @@ function RegisterPage() {
             {t("login")}
           </Link>
         </p>
+
+        <button type="button" onClick={guest} className="text-sm text-muted-foreground hover:underline">
+          {t("continue_as_guest")}
+        </button>
       </form>
     </Page>
   );

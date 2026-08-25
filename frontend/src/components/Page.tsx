@@ -19,6 +19,7 @@ export function Page({
       <header className="mb-6 text-center">
         <h1 className="font-serif text-3xl font-semibold italic tracking-tight sm:text-4xl">{title}</h1>
         {description ? <p className="mt-2 text-sm text-muted-foreground">{description}</p> : null}
+        <hr className="mt-4 border-border" />
       </header>
       {children}
     </div>

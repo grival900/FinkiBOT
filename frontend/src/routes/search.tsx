@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { X } from "lucide-react";
 import { apiGet, type SearchResult } from "@/lib/api";
 import { Notice, Page } from "@/components/Page";
 import { useI18n, type TKey } from "@/lib/i18n";
@@ -21,12 +22,40 @@ function typeLabel(type: string, t: (k: TKey) => string): string {
   return key ? t(key) : type;
 }
 
-type SearchSearch = { q?: string | undefined; source?: string | undefined };
+const SOURCE_LABELS: Record<string, string> = {
+  official: "finki.ukim.mk",
+  finki_hub: "finki-hub.com",
+};
+
+function sourceLabel(source: string): string {
+  return SOURCE_LABELS[source] ?? source;
+}
+
+// Deliberately distinct from the app's primary accent (used for the type filter and
+// everything else) so the two sources read as different at a glance in the chip row.
+const SOURCE_ACTIVE_CLASSES: Record<string, string> = {
+  finki_hub:
+    "border-emerald-700/50 bg-emerald-700/15 text-emerald-800 dark:border-emerald-500/50 dark:bg-emerald-500/15 dark:text-emerald-300",
+  official:
+    "border-sky-400/60 bg-sky-400/15 text-sky-700 dark:border-sky-300/50 dark:bg-sky-300/15 dark:text-sky-200",
+};
+
+function sourceChipClasses(source: string, active: boolean): string {
+  if (!active) return "border-border bg-card text-muted-foreground hover:bg-accent";
+  return SOURCE_ACTIVE_CLASSES[source] ?? "border-primary bg-primary/10 text-primary";
+}
+
+type SearchSearch = {
+  q?: string | undefined;
+  date_from?: string | undefined;
+  date_to?: string | undefined;
+};
 
 export const Route = createFileRoute("/search")({
   validateSearch: (search: Record<string, unknown>): SearchSearch => ({
     q: typeof search["q"] === "string" ? search["q"] : undefined,
-    source: typeof search["source"] === "string" ? search["source"] : undefined,
+    date_from: typeof search["date_from"] === "string" ? search["date_from"] : undefined,
+    date_to: typeof search["date_to"] === "string" ? search["date_to"] : undefined,
   }),
   head: () => ({
     meta: [
@@ -46,22 +75,80 @@ export const Route = createFileRoute("/search")({
   component: SearchPage,
 });
 
+function DateField({
+  label,
+  value,
+  onChange,
+  clearLabel,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  clearLabel: string;
+}) {
+  return (
+    <div>
+      <span className="mb-1 block text-xs text-muted-foreground">{label}</span>
+      <div className="flex items-center gap-1">
+        <input
+          type="date"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className={cn(
+            "h-9 rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-ring",
+            "[color-scheme:light] dark:[color-scheme:dark]",
+            // Native date inputs render the mm/dd/yyyy template in the same color as a
+            // real value — there's no reliable cross-browser CSS hook to gray out just
+            // the placeholder-state text, so it's driven off the same value the rest
+            // of the component already tracks.
+            !value && "text-muted-foreground",
+          )}
+        />
+        {value ? (
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            aria-label={clearLabel}
+            title={clearLabel}
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function fmtDate(d: string | null) {
   if (!d) return null;
   const date = new Date(d);
   return Number.isNaN(date.getTime()) ? d : date.toLocaleDateString("mk-MK");
 }
 
+// Material chunks are pieces of the recording links list (see finki_hub/recordings.py)
+// — showing that raw in a search snippet is just a wall of link labels. The actual
+// links only make sense once you're on the document's own page (see documents.$id.tsx),
+// so the search card gets a short, generic description instead.
+function resultDescription(r: SearchResult, t: (k: TKey) => string): string {
+  if (r.type === "material") return `${t("material_description")} ${r.title}`;
+  return r.chunk_text;
+}
+
 function SearchPage() {
   const { t } = useI18n();
-  const { q: urlQ, source: urlSource } = Route.useSearch();
+  const { q: urlQ, date_from: urlDateFrom, date_to: urlDateTo } = Route.useSearch();
   const navigate = Route.useNavigate();
   const [q, setQ] = useState(urlQ ?? "");
-  const [source, setSource] = useState(urlSource ?? "");
+  const [dateFrom, setDateFrom] = useState(urlDateFrom ?? "");
+  const [dateTo, setDateTo] = useState(urlDateTo ?? "");
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set());
+  // Multi-select — both sources can be checked at once (equivalent to no filter), or
+  // just one to narrow down.
+  const [activeSources, setActiveSources] = useState<Set<string>>(new Set());
 
   function toggleType(type: string) {
     setActiveTypes((prev) => {
@@ -72,28 +159,44 @@ function SearchPage() {
     });
   }
 
+  function toggleSource(src: string) {
+    setActiveSources((prev) => {
+      const next = new Set(prev);
+      if (next.has(src)) next.delete(src);
+      else next.add(src);
+      return next;
+    });
+  }
+
   // The query itself lives in the URL, not just component state — so it survives a
   // page refresh, and browser back/forward after opening a result restores the exact
   // search instead of wiping it (this effect re-runs whenever those params change,
   // which covers both cases).
   useEffect(() => {
     setQ(urlQ ?? "");
-    setSource(urlSource ?? "");
+    setDateFrom(urlDateFrom ?? "");
+    setDateTo(urlDateTo ?? "");
     if (!urlQ) {
       setResults(null);
       setActiveTypes(new Set());
+      setActiveSources(new Set());
       return;
     }
     let cancelled = false;
     setLoading(true);
     setError(null);
+    // Deliberately no `source` param — always searches every indexed source. Anyone
+    // wanting a specific source narrows it down afterward with the source chips
+    // below, same as the type filter.
     const params = new URLSearchParams({ q: urlQ, limit: "10" });
-    if (urlSource) params.set("source", urlSource);
+    if (urlDateFrom) params.set("date_from", urlDateFrom);
+    if (urlDateTo) params.set("date_to", urlDateTo);
     apiGet<SearchResult[]>(`/search?${params.toString()}`)
       .then((r) => {
         if (!cancelled) {
           setResults(r);
           setActiveTypes(new Set());
+          setActiveSources(new Set());
         }
       })
       .catch((err: unknown) => {
@@ -108,36 +211,43 @@ function SearchPage() {
     return () => {
       cancelled = true;
     };
-  }, [urlQ, urlSource]);
+  }, [urlQ, urlDateFrom, urlDateTo]);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!q.trim()) return;
-    navigate({ search: { q: q.trim(), source: source || undefined } });
+    navigate({
+      search: {
+        q: q.trim(),
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined,
+      },
+    });
   }
+
+  const filtered = results?.filter(
+    (r) =>
+      (activeTypes.size === 0 || activeTypes.has(r.type)) &&
+      (activeSources.size === 0 || activeSources.has(r.source)),
+  );
 
   return (
     <Page title={t("nav_search")}>
-      <form onSubmit={submit} className="flex flex-wrap gap-2">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder={t("search_placeholder")}
-          className="min-w-60 flex-1 rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-ring"
-        />
-        <select
-          value={source}
-          onChange={(e) => setSource(e.target.value)}
-          className="rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-ring"
-        >
-          <option value="">{t("all_sources")}</option>
-          <option value="official">finki.ukim.mk</option>
-          <option value="finki_hub">finki-hub.com</option>
-        </select>
+      <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
+        <label className="min-w-60 flex-1">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t("search_placeholder")}
+            className="h-9 w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-ring"
+          />
+        </label>
+        <DateField label={t("date_from")} value={dateFrom} onChange={setDateFrom} clearLabel={t("clear_date")} />
+        <DateField label={t("date_to")} value={dateTo} onChange={setDateTo} clearLabel={t("clear_date")} />
         <button
           type="submit"
           disabled={loading}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+          className="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
         >
           {t("submit_search")}
         </button>
@@ -145,30 +255,74 @@ function SearchPage() {
 
       {results && results.length > 0
         ? (() => {
+            const sourceCounts = new Map<string, number>();
             const typeCounts = new Map<string, number>();
-            for (const r of results) typeCounts.set(r.type, (typeCounts.get(r.type) ?? 0) + 1);
+            for (const r of results) {
+              sourceCounts.set(r.source, (sourceCounts.get(r.source) ?? 0) + 1);
+              typeCounts.set(r.type, (typeCounts.get(r.type) ?? 0) + 1);
+            }
+            const sources = Array.from(sourceCounts.keys()).sort();
             const types = Array.from(typeCounts.keys()).sort();
-            if (types.length < 2) return null;
+
+            // With exactly one source selected, a type that only exists under the
+            // *other* source can't possibly match anything — greyed out and
+            // unclickable, but still listed (not hidden) so it's clear it exists,
+            // just not reachable under the current source filter.
+            const sourceFilterNarrowed = activeSources.size > 0 && activeSources.size < sources.length;
+            const availableTypesUnderSource = sourceFilterNarrowed
+              ? new Set(results.filter((r) => activeSources.has(r.source)).map((r) => r.type))
+              : null;
+
             return (
-              <div className="mt-4 flex flex-wrap gap-1.5">
-                <span className="self-center pr-1 text-xs text-muted-foreground">
-                  {t("filter_by_type")}:
-                </span>
-                {types.map((type) => (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => toggleType(type)}
-                    className={cn(
-                      "rounded-full border px-2.5 py-1 text-xs transition-colors",
-                      activeTypes.has(type)
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-card text-muted-foreground hover:bg-accent",
-                    )}
-                  >
-                    {typeLabel(type, t)} ({typeCounts.get(type)})
-                  </button>
-                ))}
+              <div className="mt-4 space-y-2">
+                {sources.length >= 2 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className="self-center pr-1 text-xs text-muted-foreground">
+                      {t("filter_by_source")}:
+                    </span>
+                    {sources.map((src) => (
+                      <button
+                        key={src}
+                        type="button"
+                        onClick={() => toggleSource(src)}
+                        className={cn(
+                          "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                          sourceChipClasses(src, activeSources.has(src)),
+                        )}
+                      >
+                        {sourceLabel(src)} ({sourceCounts.get(src)})
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {types.length >= 2 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className="self-center pr-1 text-xs text-muted-foreground">
+                      {t("filter_by_type")}:
+                    </span>
+                    {types.map((type) => {
+                      const disabled = availableTypesUnderSource !== null && !availableTypesUnderSource.has(type);
+                      return (
+                        <button
+                          key={type}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => toggleType(type)}
+                          className={cn(
+                            "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                            disabled
+                              ? "cursor-not-allowed border-border bg-card text-muted-foreground/50"
+                              : activeTypes.has(type)
+                                ? "border-primary bg-primary/10 text-primary"
+                                : "border-border bg-card text-muted-foreground hover:bg-accent",
+                          )}
+                        >
+                          {typeLabel(type, t)} ({typeCounts.get(type)})
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
             );
           })()
@@ -184,47 +338,45 @@ function SearchPage() {
         {results && results.length === 0 && !loading ? (
           <Notice kind="info">{t("no_results")}</Notice>
         ) : null}
-        {results &&
-        activeTypes.size > 0 &&
-        results.filter((r) => activeTypes.has(r.type)).length === 0 ? (
+        {results && (activeTypes.size > 0 || activeSources.size > 0) && filtered?.length === 0 ? (
           <Notice kind="info">{t("no_results")}</Notice>
         ) : null}
-        {results
-          ?.filter((r) => activeTypes.size === 0 || activeTypes.has(r.type))
-          .map((r) => {
-            const internal = r.source === "finki_hub" && r.type === "course";
-            const date = fmtDate(r.published_at);
-            return (
-              <article
-                key={`${r.document_id}-${r.chunk_text.slice(0, 12)}`}
-                className="rounded-lg border border-border bg-card p-4"
-              >
-                {internal ? (
-                  <Link
-                    to="/documents/$id"
-                    params={{ id: r.document_id }}
-                    className="text-sm font-medium text-primary hover:underline"
-                  >
-                    {r.title}
-                  </Link>
-                ) : (
-                  <a
-                    href={r.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-sm font-medium text-primary hover:underline"
-                  >
-                    {r.title}
-                  </a>
-                )}
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {r.source} · {r.type}
-                  {date ? ` · ${date}` : ""}
-                </p>
-                <p className="mt-2 text-sm text-muted-foreground">{r.chunk_text}</p>
-              </article>
-            );
-          })}
+        {filtered?.map((r) => {
+          const internal =
+            (r.source === "finki_hub" && r.type === "course") ||
+            (r.source === "finki_hub" && r.type === "material");
+          const date = fmtDate(r.published_at);
+          return (
+            <article
+              key={`${r.document_id}-${r.chunk_text.slice(0, 12)}`}
+              className="rounded-lg border border-border bg-card p-4"
+            >
+              {internal ? (
+                <Link
+                  to="/documents/$id"
+                  params={{ id: r.document_id }}
+                  className="text-sm font-medium text-primary hover:underline"
+                >
+                  {r.title}
+                </Link>
+              ) : (
+                <a
+                  href={r.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm font-medium text-primary hover:underline"
+                >
+                  {r.title}
+                </a>
+              )}
+              <p className="mt-1 text-xs text-muted-foreground">
+                {r.source} · {r.type}
+                {date ? ` · ${date}` : ""}
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">{resultDescription(r, t)}</p>
+            </article>
+          );
+        })}
       </div>
     </Page>
   );

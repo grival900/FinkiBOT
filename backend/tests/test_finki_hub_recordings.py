@@ -20,9 +20,38 @@ def test_parse_course_page_html_extracts_title_and_strips_anchor_markers():
     title, content = parse_course_page_html(html)
 
     assert title == "Математика 1"
-    assert "Предавања" in content
-    assert "Весна Димитрова, 2021" in content
+    assert "## Предавања" in content
+    assert "### Весна Димитрова, 2021" in content
     assert "​" not in content  # zero-width-space anchor markers must be stripped
+
+
+def test_parse_course_page_html_preserves_recording_links_as_markdown():
+    """The actual playback URLs must survive as markdown links — losing them (keeping
+    only the visible label) would leave the frontend nothing to link to but the
+    finki-hub course page as a whole, not the individual recording."""
+    html = (FIXTURES / "finki_hub_recordings_course.html").read_text(encoding="utf-8")
+    _, content = parse_course_page_html(html)
+
+    assert "- [Предавање 1](https://youtube.com/watch?v=1)" in content
+    assert "- [Предавање 2](https://youtube.com/watch?v=2)" in content
+
+
+def test_parse_course_page_html_keeps_plain_text_for_sections_with_no_links():
+    html = (FIXTURES / "finki_hub_recordings_course.html").read_text(encoding="utf-8")
+    _, content = parse_course_page_html(html)
+
+    assert "## Белешки" in content
+    assert "Нема" in content
+
+
+def test_parse_course_page_html_includes_course_name_in_content():
+    """Only `content` gets chunked/embedded (see ingestion/pipeline.py) — `title` never
+    does — so the course name must appear in the returned content too, or searching by
+    course name matches nothing at all despite it being the document's title."""
+    html = (FIXTURES / "finki_hub_recordings_course.html").read_text(encoding="utf-8")
+    title, content = parse_course_page_html(html)
+
+    assert title in content
 
 
 def test_parse_course_page_html_missing_doc_returns_empty():

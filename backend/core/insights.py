@@ -75,3 +75,28 @@ def course_tag_counts(db: Session) -> list[dict]:
 
 def course_semester_distribution(db: Session) -> list[dict]:
     return count_semesters(_finki_hub_course_metadata(db))
+
+
+def build_course_code_options(rows: list[tuple[str, dict]]) -> list[dict]:
+    """Pure aggregation step, unit-testable without a DB — backs the course-code
+    picker on the Notifications page (api/routers/courses.py). One {code, name} entry
+    per course that has an accreditation code, using each course's most recent
+    accreditation only (same convention as count_semesters)."""
+    options = []
+    for title, metadata in rows:
+        accreditations = (metadata or {}).get("accreditations", [])
+        if not accreditations:
+            continue
+        code = accreditations[0].get("Код")
+        if not code:
+            continue
+        options.append({"code": code, "name": title})
+    options.sort(key=lambda o: o["name"])
+    return options
+
+
+def course_code_options(db: Session) -> list[dict]:
+    rows = db.query(Document.title, Document.doc_metadata).filter(
+        Document.source == "finki_hub", Document.type == "course"
+    ).all()
+    return build_course_code_options(rows)

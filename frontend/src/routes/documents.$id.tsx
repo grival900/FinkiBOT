@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { apiGet, type Accreditation, type DocumentDetail } from "@/lib/api";
+import { Markdown } from "@/components/Markdown";
 import { Notice, Page } from "@/components/Page";
 import { useI18n } from "@/lib/i18n";
 
@@ -156,6 +157,13 @@ function DocumentPage() {
 
   const md = doc.doc_metadata ?? {};
   const accs = md.accreditations;
+  // finki_hub course pages have no stable per-course route (predmeti.finki-hub.com's
+  // course rows are a client-side modal, not a real URL — see citation_url() in
+  // backend/api/routers/chat.py for the same reasoning) — doc.url there is just the
+  // generic listing page, not worth linking to. Every other type's doc.url is the
+  // real source page it was scraped from, so it's always safe to fall back to.
+  const isUnroutableFinkiHubCourse = doc.source === "finki_hub" && doc.type === "course" && !md.official_subject_url;
+  const sourceUrl = md.official_subject_url ?? (isUnroutableFinkiHubCourse ? null : doc.url);
 
   return (
     <Page
@@ -215,17 +223,14 @@ function DocumentPage() {
           ))}
         </div>
       ) : (
-        <p className="mt-4 text-sm leading-relaxed whitespace-pre-wrap">{doc.content}</p>
+        <div className="mt-4 text-sm">
+          <Markdown content={doc.content} />
+        </div>
       )}
 
-      {md.official_subject_url ? (
+      {sourceUrl ? (
         <p className="mt-6">
-          <a
-            href={md.official_subject_url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs text-primary hover:underline"
-          >
+          <a href={sourceUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">
             {t("source_ref")}
           </a>
         </p>
