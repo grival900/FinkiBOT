@@ -3,6 +3,7 @@ import threading
 
 from sqlalchemy.orm import Session
 
+from backend.core.site_settings import get_bool_setting
 from backend.db import SessionLocal
 from backend.ingestion.chunking import chunk_text
 from backend.ingestion.embeddings import embed_texts
@@ -33,6 +34,28 @@ def upsert_document(db: Session, ndoc: NormalizedDocument) -> tuple[Document, bo
         )
 
     if existing is None:
+        # The source site can restructure its URLs wholesale — this happened once when
+        # finki.ukim.mk's announcement board migrated off Drupal (see
+        # scrapers/official_site/announcements.py's docstring), leaving old and new URLs
+        # for the same announcements both indexed and both cited as separate sources for
+        # the same answer. When a document with the exact same source/type/title/content
+        # already exists under a different URL, treat this as that document moving
+        # rather than a new one. Matching on title *and* content_hash (not content_hash
+        # alone) matters: some announcements legitimately share boilerplate body text
+        # across different real events (e.g. yearly exam-schedule notices whose only
+        # distinguishing text lives in a linked spreadsheet we don't parse) — those must
+        # stay separate documents, and they always differ by title.
+        moved = (
+            db.query(Document)
+            .filter_by(source=ndoc.source, type=ndoc.type, title=ndoc.title, content_hash=ndoc.content_hash)
+            .first()
+        )
+        if moved is not None:
+            moved.url = ndoc.url
+            moved.published_at = ndoc.published_at
+            moved.doc_metadata = ndoc.metadata
+            return moved, False
+
         doc = Document(
             source=ndoc.source,
             type=ndoc.type,
@@ -118,6 +141,12 @@ def _run_ingestion_locked(cadence: str | None) -> dict[str, int]:
     with SessionLocal() as db:
         for entry in SCRAPERS:
             if not entry.enabled:
+                continue
+            # Admin-editable override on top of the hardcoded default — lets an admin
+            # disable a misbehaving scraper (e.g. a site layout change breaking it)
+            # without a redeploy. Can only turn an enabled scraper off, never turn a
+            # hardcoded-disabled stub on (those raise NotImplementedError).
+            if not get_bool_setting(db, f"scraper_enabled:{entry.name}", True):
                 continue
             if cadence is not None and entry.cadence != cadence:
                 continue

@@ -33,3 +33,12 @@ def send_announcement_email(to: str, documents: list[Document]) -> None:
     items = "".join(f'<li><a href="{d.url}">{d.title}</a></li>' for d in documents)
     html = f"<p>Нови соопштенија на ФИНКИ:</p><ul>{items}</ul>"
     send_email(to, "Нови соопштенија на ФИНКИ", html)
+
+
+def send_password_reset_email(to: str, reset_url: str) -> None:
+    html = (
+        "<p>Администратор побара ресетирање на лозинката за твојата сметка на FinkiBOT.</p>"
+        f'<p><a href="{reset_url}">Постави нова лозинка</a></p>'
+        "<p>Ако не си побарал ова, слободно игнорирај ја пораката.</p>"
+    )
+    send_email(to, "Ресетирање лозинка — FinkiBOT", html)

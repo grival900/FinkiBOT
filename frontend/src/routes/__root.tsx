@@ -12,6 +12,7 @@ import type { ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { ThemeProvider } from "../lib/theme";
 import { I18nProvider } from "../lib/i18n";
+import { AuthProvider } from "../lib/auth";
 import { Sidebar } from "../components/Sidebar";
 
 function NotFoundComponent() {
@@ -126,13 +127,15 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <I18nProvider>
-          <div className="flex h-screen overflow-hidden bg-background text-foreground">
-            <Sidebar />
-            <main className="min-w-0 flex-1 overflow-y-auto">
-              {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-              <Outlet />
-            </main>
-          </div>
+          <AuthProvider>
+            <div className="flex h-screen overflow-hidden bg-background text-foreground">
+              <Sidebar />
+              <main className="min-w-0 flex-1 overflow-y-auto">
+                {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+                <Outlet />
+              </main>
+            </div>
+          </AuthProvider>
         </I18nProvider>
       </ThemeProvider>
     </QueryClientProvider>

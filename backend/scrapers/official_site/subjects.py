@@ -31,6 +31,7 @@ from collections.abc import Iterator
 import httpx
 
 from backend.core.config import get_settings
+from backend.core.site_settings import get_setting_cached, parse_int_or_none
 from backend.db import SessionLocal
 from backend.models import Document
 from backend.scrapers.http import get, make_client
@@ -45,7 +46,7 @@ def _subject_urls_from_courses() -> list[str]:
         rows = db.query(Document.doc_metadata).filter(Document.source == "finki_hub", Document.type == "course")
         urls = sorted({url for (metadata,) in rows if (url := metadata.get("official_subject_url"))})
 
-    limit = get_settings().scrape_subjects_limit
+    limit = get_setting_cached("scrape_subjects_limit", get_settings().scrape_subjects_limit, parse_int_or_none)
     return urls[:limit] if limit is not None else urls
 
 

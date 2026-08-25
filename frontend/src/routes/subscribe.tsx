@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { apiPost } from "@/lib/api";
 import { Notice, Page } from "@/components/Page";
+import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 
 export const Route = createFileRoute("/subscribe")({
@@ -82,12 +83,20 @@ function TokenInput({
 
 function SubscribePage() {
   const { t } = useI18n();
+  const { user } = useAuth();
   const [email, setEmail] = useState("");
+  const [emailTouched, setEmailTouched] = useState(false);
   const [keywords, setKeywords] = useState<string[]>([]);
   const [codes, setCodes] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+
+  // Auto-fill from the logged-in user, but only until they've edited it themselves —
+  // avoids clobbering a manually-typed address once auth finishes loading.
+  useEffect(() => {
+    if (user?.email && !emailTouched) setEmail(user.email);
+  }, [user?.email, emailTouched]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -117,7 +126,10 @@ function SubscribePage() {
             type="email"
             required
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setEmailTouched(true);
+            }}
             className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-ring"
           />
         </label>

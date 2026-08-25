@@ -13,6 +13,7 @@ const TYPE_LABEL_KEYS: Record<string, TKey> = {
   material: "type_material",
   schedule: "type_schedule",
   thesis: "type_thesis",
+  page: "type_page",
 };
 
 function typeLabel(type: string, t: (k: TKey) => string): string {

@@ -37,7 +37,9 @@ containers.
 Run these in order from the repo root:
 
 ```bash
-# 1. Copy the env template and fill in GEMINI_API_KEY (required for chat + quiz)
+# 1. Copy the env template and fill in GEMINI_API_KEY (required for chat + quiz) and
+#    JWT_SECRET_KEY (required — signs login sessions, the app won't start without it):
+#    python -c "import secrets; print(secrets.token_hex(32))"
 cp backend/.env.sample backend/.env
 
 # 2. Build and start everything: Postgres, backend API, frontend
@@ -76,6 +78,24 @@ That's the whole setup. Once it finishes, open:
 | Backend API docs | http://localhost:8000/docs |
 | Mailhog (catches subscription emails, nothing sent for real) | http://localhost:8025 |
 | Adminer (browse the database directly) | http://localhost:8090 — server `db`, user/pass/db `finkibot` |
+
+## Accounts and admin access
+
+Chat/search/quiz/subscribe work with no account at all, same as always. Accounts only
+exist to gate the admin panel (`/admin` — user management, live-editable scraper/
+scheduler settings). Registration (`/register`) is open to anyone but never grants
+admin rights by itself.
+
+`python -m backend.scripts.seed` (step 3 above) also creates a default admin account
+for local dev, so there's always a way into `/admin` on a fresh machine without SMTP
+set up: **`admin@email.com` / `admin`**. Change its password after logging in, or use
+it only for local dev — for anything shared/deployed, promote a real account instead:
+
+```bash
+# 1. Register normally through the site (or POST /auth/register) first
+# 2. Then promote that account from the command line:
+docker compose exec backend python -m backend.scripts.create_admin you@example.com
+```
 
 Optionally, confirm the backend tests pass:
 
@@ -176,16 +196,20 @@ prose beyond finki-hub's course metadata).
 | finki.ukim.mk | Exam-session schedule reference links (from the announcement board widget) | `official.schedule_links` |
 | finki.ukim.mk | Official course syllabus prose — objectives, content outline, literature (capped, see `SCRAPE_SUBJECTS_LIMIT`) | `official.subjects` |
 | finki.ukim.mk | Professor bios/publications (finki-hub's staff directory has contact info only, no bios) | `official.professors` |
+| finki.ukim.mk | Static info pages — About Us, Studies, Admissions (quotas/requirements/documents per study cycle), International Students, Contact | `official.info_pages` |
 
 **Not yet implemented** (registered but disabled in `backend/scrapers/registry.py`,
 so a reindex skips them instead of failing): finki-hub's thesis archive (4000+
 records, needs its own scoping) and class schedules (`rasporedi.finki-hub.com`).
 
-**Known broken:** none currently — `official.pages` (static info pages) was removed
-this session; its only discovery mechanism (finki.ukim.mk's WordPress sitemap)
-dead-redirects after the site's redesign, so it had been silently indexing nothing.
-If someone wants that content back, it needs a real listing page found on the live
-site first (same fix `official.professors` got — see its docstring).
+**Known broken:** none currently. The previous `official.pages` (static info pages)
+was removed because its only discovery mechanism (finki.ukim.mk's WordPress sitemap)
+dead-redirects after the site's redesign; `official.info_pages` replaces it with a
+hand-curated URL list (same fix `official.professors` got for its own listing page —
+see its docstring) covering the student-relevant subset of About Us/Studies/
+Admissions/International Students/Contact. Deliberately excludes legal/procurement/
+finance/reports pages, English-only duplicates, and PDF-only content — see
+`info_pages.py`'s docstring for the full reasoning.
 
 ## A quick heads-up if something's not scraping right
 

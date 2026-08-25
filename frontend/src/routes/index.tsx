@@ -4,6 +4,7 @@ import { Send } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { streamChat, type ChatMessage } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { Notice } from "@/components/Page";
 import {
@@ -75,6 +76,7 @@ export const Route = createFileRoute("/")({
 
 function ChatPage() {
   const { t } = useI18n();
+  const { user } = useAuth();
   const { c: convId, new: newFlag } = Route.useSearch();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -85,7 +87,7 @@ function ChatPage() {
 
   useEffect(() => {
     if (convId) {
-      const conv = loadConversations().find((x) => x.id === convId);
+      const conv = loadConversations(user?.id).find((x) => x.id === convId);
       if (conv) {
         idRef.current = conv.id;
         setMessages(conv.messages);
@@ -94,7 +96,7 @@ function ChatPage() {
     }
     idRef.current = newId();
     setMessages([]);
-  }, [convId, newFlag]);
+  }, [convId, newFlag, user?.id]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -102,7 +104,7 @@ function ChatPage() {
 
   function persist(next: ChatMessage[]) {
     if (next.length === 0) return;
-    const list = loadConversations();
+    const list = loadConversations(user?.id);
     const title = next[0]?.content.slice(0, 48) || "…";
     const conv: Conversation = {
       id: idRef.current,
@@ -111,7 +113,7 @@ function ChatPage() {
       messages: next,
     };
     const rest = list.filter((x) => x.id !== conv.id);
-    saveConversations([conv, ...rest]);
+    saveConversations([conv, ...rest], user?.id);
   }
 
   async function send(e: React.FormEvent) {

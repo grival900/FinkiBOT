@@ -36,8 +36,15 @@ def test_parse_professor_html_missing_content_returns_empty():
     assert (name, content, email) == ("", "", None)
 
 
-def test_scrape_professors_skips_empty_bios():
-    fake_urls = ["https://finki.ukim.mk/kadar/full/", "https://finki.ukim.mk/kadar/empty/"]
+def test_scrape_professors_skips_only_truly_empty_profiles():
+    """A thin/missing bio alone isn't skipped if there's an email — administrative
+    staff commonly have no bio at all but a real contact address worth indexing.
+    Only a profile with neither a substantial bio nor an email is dropped."""
+    fake_urls = [
+        "https://finki.ukim.mk/kadar/full/",
+        "https://finki.ukim.mk/kadar/contact-only/",
+        "https://finki.ukim.mk/kadar/empty/",
+    ]
 
     with (
         patch.object(professors, "make_client"),
@@ -48,6 +55,7 @@ def test_scrape_professors_skips_empty_bios():
             "parse_professor_html",
             side_effect=[
                 ("Полн Профил", "Богата биографија. " * 10, "full@finki.ukim.mk"),
+                ("Само Контакт", "Нема внесени податоци", "contact@finki.ukim.mk"),
                 ("Празен Профил", "Нема внесени податоци", None),
             ],
         ),
@@ -56,6 +64,10 @@ def test_scrape_professors_skips_empty_bios():
         mock_get.return_value.url.path = "/kadar/full/"
         docs = list(scrape_professors())
 
-    assert [d.url for d in docs] == ["https://finki.ukim.mk/kadar/full/"]
+    assert [d.url for d in docs] == [
+        "https://finki.ukim.mk/kadar/full/",
+        "https://finki.ukim.mk/kadar/contact-only/",
+    ]
     assert docs[0].type == "professor"
     assert docs[0].metadata == {"email": "full@finki.ukim.mk"}
+    assert docs[1].metadata == {"email": "contact@finki.ukim.mk"}

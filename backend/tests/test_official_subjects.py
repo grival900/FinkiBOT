@@ -24,9 +24,8 @@ def test_subject_urls_reads_official_subject_url_only_deduped_and_sorted():
     ]
     with (
         patch.object(subjects, "SessionLocal", _mock_db_rows(rows)),
-        patch.object(subjects, "get_settings") as mock_settings,
+        patch.object(subjects, "get_setting_cached", return_value=None),
     ):
-        mock_settings.return_value.scrape_subjects_limit = None
         urls = _subject_urls_from_courses()
 
     assert urls == [
@@ -39,9 +38,8 @@ def test_subject_urls_respects_configured_limit():
     rows = [{"official_subject_url": f"https://www.finki.ukim.mk/mk/subject/{c}"} for c in "CBA"]
     with (
         patch.object(subjects, "SessionLocal", _mock_db_rows(rows)),
-        patch.object(subjects, "get_settings") as mock_settings,
+        patch.object(subjects, "get_setting_cached", return_value=2),
     ):
-        mock_settings.return_value.scrape_subjects_limit = 2
         urls = _subject_urls_from_courses()
 
     assert urls == [

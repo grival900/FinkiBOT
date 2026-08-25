@@ -1,7 +1,6 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from backend.core.config import Settings
 from backend.scrapers.official_site import announcements
 from backend.scrapers.official_site.announcements import parse_detail_html, parse_listing_html, scrape_announcements
 
@@ -39,7 +38,7 @@ def test_scrape_announcements_stops_at_the_configured_limit():
         patch.object(announcements, "_iter_listing_rows", return_value=iter(fake_rows)),
         patch.object(announcements, "_fetch_detail", return_value="body text"),
         patch.object(announcements, "make_client"),
-        patch.object(announcements, "get_settings", return_value=Settings(scrape_announcement_limit=2)),
+        patch.object(announcements, "get_setting_cached", return_value=2),
     ):
         docs = list(scrape_announcements())
 
@@ -56,7 +55,7 @@ def test_scrape_announcements_unlimited_by_default():
         patch.object(announcements, "_iter_listing_rows", return_value=iter(fake_rows)),
         patch.object(announcements, "_fetch_detail", return_value="body text"),
         patch.object(announcements, "make_client"),
-        patch.object(announcements, "get_settings", return_value=Settings(scrape_announcement_limit=None)),
+        patch.object(announcements, "get_setting_cached", return_value=None),
     ):
         docs = list(scrape_announcements())
 

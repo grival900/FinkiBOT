@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -14,6 +15,13 @@ from backend.db import get_db
 router = APIRouter(prefix="/chat", tags=["chat"])
 settings = get_settings()
 
+# How many candidates to pull from vector search before recency-filtering down to
+# CHAT_RESULT_K — needs to be wide enough that a query matching a yearly-recurring
+# announcement (e.g. "студентска служба") has a real chance of surfacing a current-year
+# hit alongside the older ones semantic search alone would rank just as high.
+CANDIDATE_POOL_K = 24
+CHAT_RESULT_K = 6
+
 SYSTEM_PROMPT = (
     "You are FinkiBOT, an assistant for students at FINKI (Faculty of Computer Science "
     "and Engineering, Skopje). You receive context snippets retrieved from finki.ukim.mk "
@@ -27,6 +35,12 @@ SYSTEM_PROMPT = (
     "schedules, deadlines, enrollment rules) from general knowledge — only state FINKI "
     "facts that appear in the provided context. If a FINKI-specific question has no "
     "matching context, say so plainly.\n\n"
+    "Context entries include a date. For announcements specifically, the retrieval "
+    "layer already prefers this year's matches over older ones when both exist for the "
+    "same query — so if every announcement in your context is from a past year, that "
+    "means nothing more recent was found, not an oversight. In that case, say plainly "
+    "that you don't have anything from this year and name the year(s) the information "
+    "you do have is actually from, rather than presenting old announcements as current.\n\n"
     "Some context entries have type=schedule: these are reference links (e.g. to an exam "
     "session schedule spreadsheet), not documents with the actual dates in their text — "
     "we don't have the file contents, only the link. When a schedule entry's title matches "
@@ -61,6 +75,24 @@ SYSTEM_PROMPT = (
     "full bio or a course syllabus) — just don't stretch length unnecessarily. "
     "Respond in the same language the student asked in (usually Macedonian)."
 )
+
+
+def prefer_current_year(results: list[SearchResult], k: int, current_year: int) -> list[SearchResult]:
+    """Recency bias for chat context — a query like "студентска служба" semantically
+    matches near-identical announcement text posted every year, and cosine similarity
+    alone has no way to prefer this year's copy over 2014's. Undated results (courses,
+    professors, etc. — only `announcement` documents carry `published_at`, see
+    `scrapers/official_site/announcements.py`) are always kept since recency doesn't
+    apply to them. Among dated results, older years are dropped whenever at least one
+    current-year match exists for the same query; otherwise every dated result is kept
+    as a fallback, oldest included, since that's genuinely the best we have.
+    """
+    dated = [r for r in results if r.published_at is not None]
+    undated = [r for r in results if r.published_at is None]
+    current_year_matches = [r for r in dated if r.published_at.year == current_year]  # type: ignore[union-attr]
+    kept_dated = current_year_matches if current_year_matches else dated
+    merged = sorted(kept_dated + undated, key=lambda r: r.score, reverse=True)
+    return merged[:k]
 
 
 def citation_url(result: SearchResult) -> str:
@@ -111,7 +143,9 @@ def _gemini_role(role: str) -> str:
 
 @router.post("")
 def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingResponse:
-    results = search(db, payload.message, k=6)
+    candidates = search(db, payload.message, k=CANDIDATE_POOL_K)
+    current_year = datetime.now(timezone.utc).year
+    results = prefer_current_year(candidates, k=CHAT_RESULT_K, current_year=current_year)
     context = build_context(results)
 
     contents = [
@@ -135,6 +169,11 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingRespon
                 system_instruction=SYSTEM_PROMPT,
                 max_output_tokens=4096,
                 temperature=0.2,
+                # gemini-2.5-flash runs an extended "thinking" pass by default — measured
+                # ~3s added to time-to-first-token for zero benefit on this task (grounded
+                # RAG lookup + rephrasing, not multi-step reasoning). Disabling it cut
+                # first-token latency from ~4.4s to ~1s in testing.
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
         for chunk in stream:

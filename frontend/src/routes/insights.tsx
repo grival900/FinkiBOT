@@ -73,7 +73,7 @@ function InsightsPage() {
         </Notice>
       ) : null}
       {data ? (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid items-start gap-4 lg:grid-cols-2">
           <BarSection
             title={t("insights_docs")}
             data={data.documents_by_type.map((d) => ({

@@ -13,7 +13,7 @@ EMBEDDING_DIM = 1024  # BAAI/bge-m3
 # Source and Document.type are free-form strings (not DB enums) on purpose: adding a
 # new source or document type should not require a migration.
 Source = str  # "official" | "finki_hub"
-DocumentType = str  # "announcement" | "course" | "professor" | "thesis" | "schedule" | "material"
+DocumentType = str  # "announcement" | "course" | "professor" | "thesis" | "schedule" | "material" | "page"
 
 
 class Document(Base):
@@ -67,3 +67,32 @@ class SentNotification(Base):
     subscription_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("subscriptions.id", ondelete="CASCADE"))
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("email", name="uq_users_email"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    is_admin: Mapped[bool] = mapped_column(default=False)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    # Admin-triggered password reset (see core/users.py) — same shape as
+    # Subscription.confirm_token, plus an expiry since this one grants account access.
+    reset_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    reset_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SiteSetting(Base):
+    """Admin-editable operational settings (scraper limits, scheduler intervals, per-
+    scraper enable/disable) — see core/site_settings.py. Deliberately excludes secrets
+    (API keys, DB/SMTP credentials, the JWT signing key), which stay .env-only. Keyed
+    by name rather than a surrogate id since this is addressed by key everywhere."""
+
+    __tablename__ = "site_settings"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

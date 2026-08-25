@@ -12,9 +12,12 @@ import {
   Monitor,
   Plus,
   User,
+  Shield,
+  LogOut,
 } from "lucide-react";
 import { useI18n, type TKey } from "@/lib/i18n";
 import { useTheme, type ThemeMode } from "@/lib/theme";
+import { useAuth } from "@/lib/auth";
 import { loadConversations, type Conversation } from "@/lib/chat-history";
 import { cn } from "@/lib/utils";
 
@@ -36,16 +39,18 @@ const THEMES: { mode: ThemeMode; key: TKey; icon: typeof Sun }[] = [
 export function Sidebar() {
   const { t, lang, setLang } = useI18n();
   const { mode, setMode } = useTheme();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const nav = user?.is_admin ? [...NAV, { to: "/admin", key: "admin" as const, icon: Shield }] : NAV;
 
   useEffect(() => {
-    const sync = () => setConversations(loadConversations());
+    const sync = () => setConversations(loadConversations(user?.id));
     sync();
     window.addEventListener("finkibot-conversations", sync);
     return () => window.removeEventListener("finkibot-conversations", sync);
-  }, []);
+  }, [user?.id]);
 
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground">
@@ -62,7 +67,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-0.5 p-2">
-        {NAV.map(({ to, key, icon: Icon }) => {
+        {nav.map(({ to, key, icon: Icon }) => {
           const active = to === "/" ? pathname === "/" : pathname.startsWith(to);
           return (
             <Link
@@ -115,15 +120,43 @@ export function Sidebar() {
       </div>
 
       <div className="space-y-3 border-t border-border p-3">
-        <div className="flex items-center gap-2">
-          <span className="flex size-8 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
-            <User className="size-4" />
-          </span>
-          <span className="leading-tight">
-            <span className="block text-sm font-medium">{t("guest")}</span>
-            <span className="block text-xs text-muted-foreground">{t("no_login")}</span>
-          </span>
-        </div>
+        {user ? (
+          <div className="flex items-center gap-2">
+            <span className="flex size-8 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
+              <User className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1 leading-tight">
+              <span className="block truncate text-sm font-medium">{user.email}</span>
+              <span className="block text-xs text-muted-foreground">
+                {user.is_admin ? t("admin_badge") : t("profile")}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                logout();
+                navigate({ to: "/" });
+              }}
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              aria-label={t("logout")}
+            >
+              <LogOut className="size-4" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className="flex size-8 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
+              <User className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1 leading-tight">
+              <span className="block text-sm font-medium">{t("guest")}</span>
+              <span className="block text-xs text-muted-foreground">{t("no_login")}</span>
+            </span>
+            <Link to="/login" className="text-xs text-primary hover:underline">
+              {t("login")}
+            </Link>
+          </div>
+        )}
 
         <div>
           <span className="mb-1 block text-xs text-muted-foreground">{t("theme")}</span>

@@ -15,8 +15,10 @@ confirmed live, one page, no pagination, ~107 `a.kadar-item__link` entries.
 Confirmed live: all tabs (Резиме/Книги/Трудови/Конференции/Проекти/Член) are
 server-rendered in the initial HTML regardless of which one is visually active, so a
 plain GET captures everything — no client-side tab-click interaction needed. Many
-profiles have no bio filled in ("Нема внесени податоци") and are skipped as
-near-empty, same rationale as `pages.py`'s landing-page filter.
+profiles have no bio filled in ("Нема внесени податоци") — skipped as near-empty
+*unless* they carry an email, since administrative staff (secretaries, department
+contacts) commonly have no bio at all but a real contact address that's exactly what
+a student would want out of a staff lookup.
 """
 
 import logging
@@ -76,7 +78,11 @@ def scrape_professors() -> Iterator[NormalizedDocument]:
                 continue
 
             name, content, email = parse_professor_html(response.content)
-            if len(content) < MIN_CONTENT_LENGTH:
+            # A short/empty bio ("Нема внесени податоци") is common for administrative
+            # staff, who often have no bio at all but a real, useful contact email — skip
+            # only when there's neither a substantial bio nor an email, since that's the
+            # only case with nothing worth indexing.
+            if len(content) < MIN_CONTENT_LENGTH and not email:
                 continue
 
             yield NormalizedDocument(

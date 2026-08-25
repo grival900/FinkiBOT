@@ -6,9 +6,9 @@ FastAPI app, scrapers, ingestion/RAG pipeline, MCP servers, notifier, and quiz l
 
 | Path | Purpose |
 |---|---|
-| `api/` | FastAPI app + routers (`search`, `documents`, `chat`, `quiz`, `subscribe`/announcements, `admin`, `mcp_tools`) |
-| `core/` | Shared config, LLM client wrapper, `retrieval.py` (the one place vector search lives) |
-| `scrapers/official_site/` | `announcements.py` (the board), `schedule_links.py` (exam-session schedule reference links), `subjects.py` (official course syllabus prose — the gap on top of `finki_hub.courses`), `professors.py` (bios/publications — the gap on top of `finki_hub.staff`) |
+| `api/` | FastAPI app + routers (`search`, `documents`, `chat`, `quiz`, `subscribe`/announcements, `auth`, `admin`, `mcp_tools`) |
+| `core/` | Shared config, LLM client wrapper, `retrieval.py` (the one place vector search lives), `auth.py` (password hashing, JWT, `get_current_user`/`require_admin`), `users.py` (admin user-management guards), `site_settings.py` (admin-editable operational settings, DB-backed) |
+| `scrapers/official_site/` | `announcements.py` (the board), `schedule_links.py` (exam-session schedule reference links), `subjects.py` (official course syllabus prose — the gap on top of `finki_hub.courses`), `professors.py` (bios/publications — the gap on top of `finki_hub.staff`), `info_pages.py` (About Us/Studies/Admissions/International Students/Contact — hand-curated URL list, see its docstring) |
 | `scrapers/finki_hub/` | `courses.py` (course listing), `staff.py` (teaching staff), `sessions.py` (exam session schedules), `recordings.py` (recorded-lecture links/notes) — all fetch JSON from `assets.finki-hub.com`; thesis archive stub — see Known gaps |
 | `scrapers/` (root) | `normalize.py` (common schema), `registry.py` (what `/admin/reindex` runs), `http.py` (shared rate-limited client) |
 | `ingestion/` | Chunking, local embeddings (BGE-M3), pgvector indexing |
@@ -18,7 +18,7 @@ FastAPI app, scrapers, ingestion/RAG pipeline, MCP servers, notifier, and quiz l
 | `models.py`, `db.py` | SQLAlchemy models and session setup |
 | `alembic/` | DB migrations |
 | `scheduler.py` | Periodic scrape → index → notify job (APScheduler) |
-| `scripts/` | `reindex.py` (manual scrape + index), `seed.py`/`export_seed.py` (fast offline bootstrap from `seed/documents.json` — see "First time on a new machine" in the root README) |
+| `scripts/` | `reindex.py` (manual scrape + index), `seed.py`/`export_seed.py` (fast offline bootstrap from `seed/documents.json` — see "First time on a new machine" in the root README), `create_admin.py` (promotes an already-registered user to admin — see root README's "Accounts and admin access") |
 | `tests/` | Unit tests — pure-logic and fixture-based, no live network or DB required |
 
 ## Local dev (without Docker)

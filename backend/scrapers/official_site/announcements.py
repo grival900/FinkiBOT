@@ -27,6 +27,7 @@ from urllib.parse import urljoin
 import httpx
 
 from backend.core.config import get_settings
+from backend.core.site_settings import get_setting_cached, parse_int_or_none
 from backend.scrapers.http import get, make_client
 from backend.scrapers.normalize import NormalizedDocument
 from backend.scrapers.official_site.base import BASE_URL, extract_page_body_text, parse_html
@@ -79,8 +80,9 @@ def _fetch_detail(client: httpx.Client, url: str) -> str:
 def scrape_announcements() -> Iterator[NormalizedDocument]:
     """The listing is sorted newest-first, so `scrape_announcement_limit` (if set) caps
     this to the N most recent announcements — the ones actually relevant to students —
-    rather than backfilling the entire historical board on every run."""
-    limit = get_settings().scrape_announcement_limit
+    rather than backfilling the entire historical board on every run. Admin-editable
+    (site_settings) — the env value is only the fallback default."""
+    limit = get_setting_cached("scrape_announcement_limit", get_settings().scrape_announcement_limit, parse_int_or_none)
     yielded = 0
 
     with make_client() as client:

@@ -25,6 +25,7 @@ from backend.mcp_servers.official_mcp.server import (
     get_exam_schedule,
     get_professor_info,
     search_announcements,
+    search_faculty_info,
 )
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
@@ -35,6 +36,7 @@ SERVERS: dict[str, dict[str, Callable]] = {
         "get_exam_schedule": get_exam_schedule,
         "get_course_info": get_course_info,
         "get_professor_info": get_professor_info,
+        "search_faculty_info": search_faculty_info,
     },
     "finki_hub": {
         "search_courses": search_courses,

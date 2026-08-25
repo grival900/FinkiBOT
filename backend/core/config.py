@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     # change; no need to pay that on the same hourly cadence as announcements.
     scheduler_slow_interval_minutes: int = 10080
 
+    # Required, no default — this signs auth tokens, so a shared/hardcoded default
+    # would let anyone forge a valid admin session. Generate one with:
+    # python -c "import secrets; print(secrets.token_hex(32))"
+    jwt_secret_key: str
+    jwt_expires_minutes: int = 1440  # 24h
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -17,6 +17,7 @@ from backend.scrapers.finki_hub.staff import scrape_staff
 from backend.scrapers.finki_hub.thesis_archive import scrape_thesis_archive
 from backend.scrapers.normalize import NormalizedDocument
 from backend.scrapers.official_site.announcements import scrape_announcements
+from backend.scrapers.official_site.info_pages import scrape_info_pages
 from backend.scrapers.official_site.professors import scrape_professors
 from backend.scrapers.official_site.schedule_links import scrape_schedule_links
 from backend.scrapers.official_site.subjects import scrape_subjects
@@ -45,6 +46,11 @@ SCRAPERS: list[ScraperEntry] = [
     ScraperEntry(name="official.announcements", source="official", fn=scrape_announcements, cadence="frequent"),
     ScraperEntry(name="official.schedule_links", source="official", fn=scrape_schedule_links, cadence="frequent"),
     ScraperEntry(name="official.professors", source="official", fn=scrape_professors, cadence="slow"),
+    # Static content (About Us/Studies/Admissions/International Students/Contact) —
+    # changes rarely, hence "slow" even though it's a short, hand-curated URL list
+    # rather than the usual one-request-per-discovered-item pattern that cadence
+    # otherwise implies. See info_pages.py's docstring for scope/exclusions.
+    ScraperEntry(name="official.info_pages", source="official", fn=scrape_info_pages, cadence="slow"),
     # Must run after finki_hub.courses — it reads official subject-page URLs that
     # finki_hub.courses already captured from the finki-hub detail dialog, rather than
     # discovering them independently (there's no listing/sitemap of its own).
