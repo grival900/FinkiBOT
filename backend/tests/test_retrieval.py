@@ -1,7 +1,8 @@
+from datetime import date
 from unittest.mock import patch
 
 from backend.core import retrieval
-from backend.core.retrieval import SearchResult, _merge, search
+from backend.core.retrieval import SearchResult, _merge, _query_vectors, search
 
 
 def _result(**overrides) -> SearchResult:
@@ -66,6 +67,59 @@ def test_search_without_source_filter_unions_instead_of_competing():
     # every finki_hub result is present, just not first.
     assert results[0].source == "official"
     assert "finki_hub-0" in document_ids
+
+
+def test_query_vectors_adds_a_transliterated_variant_for_a_latin_query():
+    with patch.object(retrieval, "embed_query", side_effect=lambda q: [q]) as embed:
+        vectors = _query_vectors("bazi na podatoci")
+
+    assert [call.args[0] for call in embed.call_args_list] == [
+        "bazi na podatoci",
+        "бази на податоци",
+    ]
+    assert vectors == [["bazi na podatoci"], ["бази на податоци"]]
+
+
+def test_query_vectors_leaves_a_cyrillic_query_untouched():
+    with patch.object(retrieval, "embed_query", side_effect=lambda q: [q]) as embed:
+        _query_vectors("бази на податоци")
+
+    assert [call.args[0] for call in embed.call_args_list] == ["бази на податоци"]
+
+
+def test_query_vectors_does_not_duplicate_when_transliteration_is_a_noop():
+    """A query with only unmapped Latin letters (q/w/x/y) transliterates to itself once
+    lowercased — no point embedding the same string twice."""
+    with patch.object(retrieval, "embed_query", side_effect=lambda q: [q]) as embed:
+        _query_vectors("qwxy")
+
+    assert embed.call_count == 1
+
+
+def test_query_vectors_mixed_script_query_is_not_transliterated():
+    """`SQL бази` already has Cyrillic — transliterating the Latin part would corrupt
+    the technical term without helping recall."""
+    with patch.object(retrieval, "embed_query", side_effect=lambda q: [q]) as embed:
+        _query_vectors("SQL бази")
+
+    assert [call.args[0] for call in embed.call_args_list] == ["SQL бази"]
+
+
+def test_search_passes_the_date_range_through_to_each_per_source_query():
+    df, dt = date(2026, 1, 1), date(2026, 6, 30)
+    seen = []
+
+    def fake_search_by_vector(db, vector, k, source, type, date_from=None, date_to=None):
+        seen.append((source, date_from, date_to))
+        return []
+
+    with (
+        patch.object(retrieval, "_query_vectors", return_value=[[0.1]]),
+        patch.object(retrieval, "_search_by_vector", side_effect=fake_search_by_vector),
+    ):
+        search(db=None, query="сесија", k=5, date_from=df, date_to=dt)
+
+    assert seen == [("official", df, dt), ("finki_hub", df, dt)]
 
 
 def test_search_caps_each_source_at_k_before_merging():

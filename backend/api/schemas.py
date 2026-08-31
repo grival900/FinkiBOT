@@ -143,6 +143,30 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=72)
 
 
+class ScraperStatOut(BaseModel):
+    name: str
+    seen: int
+    new: int
+    updated: int
+    unchanged: int
+    failed: int
+
+
+class ReindexStatusOut(BaseModel):
+    state: Literal["idle", "running", "done", "error"]
+    cadence: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    duration_seconds: float | None = None
+    progress_done: int = 0
+    progress_total: int = 0
+    current_scraper: str | None = None
+    scrapers: list[ScraperStatOut] = []
+    seed_refreshed: bool = False
+    seed_document_count: int | None = None
+    error: str | None = None
+
+
 class ScraperEnabledOut(BaseModel):
     name: str
     enabled: bool

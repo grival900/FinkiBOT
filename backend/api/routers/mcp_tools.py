@@ -1,10 +1,10 @@
 """HTTP passthrough onto the actual MCP tool functions, for the web playground.
 
-This does not speak the MCP protocol itself (no stdio/SSE transport, no MCP client
+This does not speak the MCP protocol itself (no stdio/SSE transport, no MCP
 session) — it imports and calls the exact same functions the `@mcp.tool()` decorator
 registers in `backend.mcp_servers.*`, so playground results can never drift from what
-a real MCP client (e.g. Claude Desktop) would get calling the same tool. It exists so
-a plain browser, with no MCP client, can see and try these tools interactively.
+calling the same tool over MCP would return. It exists so a plain browser can see and
+try these tools interactively.
 """
 
 import inspect

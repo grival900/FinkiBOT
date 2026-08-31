@@ -8,11 +8,11 @@ store (Postgres + pgvector), and gives students a few ways to use it:
 - **Search** — raw ranked results instead of an LLM-written answer
 - **Quiz maker** — generates quiz questions from an uploaded PDF/PPTX
 - **Subscribe** — email alerts when new announcements match your keywords/courses
-- **MCP tools playground** — the same tools an MCP client (e.g. Claude Desktop) can
-  call, runnable/inspectable directly on the site
+- **MCP tools playground** — FinkiBOT's MCP tools, runnable and inspectable directly
+  on the site
 
 Two **MCP servers** (`official_mcp`, `finki_hub_mcp`) expose that same indexed data
-as standardized tools for external AI clients — see [`backend/mcp_servers/`](backend/mcp_servers).
+as standardized MCP tools — see [`backend/mcp_servers/`](backend/mcp_servers).
 
 ## Layout
 
@@ -139,6 +139,10 @@ future first-time setups start closer to current (maintainers only — this rewr
 ```bash
 docker compose exec backend python -m backend.scripts.export_seed
 ```
+
+The admin panel's **Reindex** button (Settings tab) already does this automatically
+after each manual run — scrape, index, then rewrite the seed — so in practice you
+just review and commit the changed `documents.json`.
 
 Other useful commands:
 

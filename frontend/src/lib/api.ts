@@ -175,6 +175,30 @@ export type SiteSettings = {
   scrapers: ScraperEnabled[];
 };
 
+export type ScraperStat = {
+  name: string;
+  seen: number;
+  new: number;
+  updated: number;
+  unchanged: number;
+  failed: number;
+};
+
+export type ReindexStatus = {
+  state: "idle" | "running" | "done" | "error";
+  cadence: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_seconds: number | null;
+  progress_done: number;
+  progress_total: number;
+  current_scraper: string | null;
+  scrapers: ScraperStat[];
+  seed_refreshed: boolean;
+  seed_document_count: number | null;
+  error: string | null;
+};
+
 /* ---------- streaming chat ---------- */
 
 export async function streamChat(

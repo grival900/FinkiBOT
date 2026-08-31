@@ -10,8 +10,7 @@ export const Route = createFileRoute("/mcp")({
       { title: "MCP алатки — FinkiBOT" },
       {
         name: "description",
-        content:
-          "Пробај ги MCP алатките што FinkiBOT ги изложува кон AI клиенти како Claude Desktop.",
+        content: "Пробај ги MCP алатките на FinkiBOT врз finki.ukim.mk и finki-hub.com.",
       },
       { property: "og:title", content: "MCP алатки — FinkiBOT" },
       {

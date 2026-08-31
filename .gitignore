@@ -19,6 +19,7 @@ frontend/.vite/
 backend/data/cache/
 *.db
 *.sqlite3
+.claude
 
 # Editors / OS
 .vscode/

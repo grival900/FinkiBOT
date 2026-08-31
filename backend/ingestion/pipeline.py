@@ -1,5 +1,8 @@
 import logging
 import threading
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -15,11 +18,27 @@ logger = logging.getLogger(__name__)
 
 _ingestion_lock = threading.Lock()
 
+Outcome = Literal["new", "updated", "unchanged"]
 
-def upsert_document(db: Session, ndoc: NormalizedDocument) -> tuple[Document, bool]:
-    """Inserts or updates a Document by its unique `url`. Returns (document, changed) —
-    `changed` is False when the URL was already indexed with identical content, so the
-    caller can skip re-chunking/re-embedding unchanged pages."""
+# Reported to the caller (per scraper) after a run — `/admin/reindex` turns this into
+# the "12 new, 3 updated" summary the admin panel shows once a reindex finishes.
+ProgressCallback = Callable[[int, int, str | None], None]
+
+
+@dataclass
+class ScraperStats:
+    seen: int = 0
+    new: int = 0
+    updated: int = 0
+    unchanged: int = 0
+    failed: int = 0
+
+
+def upsert_document(db: Session, ndoc: NormalizedDocument) -> tuple[Document, Outcome]:
+    """Inserts or updates a Document by its unique `url`. Returns (document, outcome):
+    "new" for a first-time insert, "updated" when the URL was already indexed but its
+    content changed, "unchanged" otherwise (including a pure URL move) — so the caller
+    can skip re-chunking/re-embedding and report a meaningful diff."""
     existing = db.query(Document).filter_by(url=ndoc.url).one_or_none()
 
     if existing is not None and (existing.source != ndoc.source or existing.type != ndoc.type):
@@ -54,7 +73,7 @@ def upsert_document(db: Session, ndoc: NormalizedDocument) -> tuple[Document, bo
             moved.url = ndoc.url
             moved.published_at = ndoc.published_at
             moved.doc_metadata = ndoc.metadata
-            return moved, False
+            return moved, "unchanged"
 
         doc = Document(
             source=ndoc.source,
@@ -68,16 +87,17 @@ def upsert_document(db: Session, ndoc: NormalizedDocument) -> tuple[Document, bo
         )
         db.add(doc)
         db.flush()
-        return doc, True
+        return doc, "new"
 
-    changed = existing.content_hash != ndoc.content_hash
-    if changed:
-        existing.title = ndoc.title
-        existing.content = ndoc.content
-        existing.content_hash = ndoc.content_hash
-        existing.published_at = ndoc.published_at
-        existing.doc_metadata = ndoc.metadata
-    return existing, changed
+    if existing.content_hash == ndoc.content_hash:
+        return existing, "unchanged"
+
+    existing.title = ndoc.title
+    existing.content = ndoc.content
+    existing.content_hash = ndoc.content_hash
+    existing.published_at = ndoc.published_at
+    existing.doc_metadata = ndoc.metadata
+    return existing, "updated"
 
 
 def reindex_document(db: Session, doc: Document) -> None:
@@ -91,17 +111,27 @@ def reindex_document(db: Session, doc: Document) -> None:
         db.add(Chunk(document_id=doc.id, chunk_index=i, text=text, embedding=vector))
 
 
-def ingest_normalized_document(db: Session, ndoc: NormalizedDocument) -> tuple[Document, bool]:
-    doc, changed = upsert_document(db, ndoc)
-    if changed:
+def ingest_normalized_document(db: Session, ndoc: NormalizedDocument) -> tuple[Document, Outcome]:
+    doc, outcome = upsert_document(db, ndoc)
+    if outcome != "unchanged":
         reindex_document(db, doc)
-    return doc, changed
+    return doc, outcome
 
 
-def run_ingestion(cadence: str | None = None) -> dict[str, int]:
+def run_ingestion(
+    cadence: str | None = None,
+    progress_cb: ProgressCallback | None = None,
+) -> dict[str, ScraperStats]:
     """Runs every enabled scraper matching `cadence` ("frequent" or "slow"), or every
-    enabled scraper if `cadence` is None. Returns a per-scraper count of documents seen
-    (used by /admin/reindex and the scheduler for logging).
+    enabled scraper if `cadence` is None. Returns per-scraper counts (seen / new /
+    updated / unchanged / failed), used by /admin/reindex for its progress + result
+    summary and by the scheduler for logging.
+
+    `progress_cb(done, total, current)` is invoked before each scraper starts (with the
+    count already finished and the name about to run) and once more at the end with
+    `done == total` and `current is None` — the admin panel polls this to drive its
+    progress bar. Returns `{}` without running anything when another ingestion already
+    holds the lock.
 
     Guarded by a lock so concurrent calls (e.g. scheduler + manual trigger) don't race —
     the frequent and slow scheduler jobs share this same lock, so one running long never
@@ -110,12 +140,12 @@ def run_ingestion(cadence: str | None = None) -> dict[str, int]:
         logger.warning("Skipping ingestion — another ingestion is already running")
         return {}
     try:
-        return _run_ingestion_locked(cadence)
+        return _run_ingestion_locked(cadence, progress_cb)
     finally:
         _ingestion_lock.release()
 
 
-def run_full_ingestion() -> dict[str, int]:
+def run_full_ingestion() -> dict[str, ScraperStats]:
     """Runs every enabled scraper, regardless of cadence. Slow (see `registry.py`) —
     prefer `run_frequent_ingestion()`/`run_slow_ingestion()` for the scheduler; this is
     for a deliberate one-off full rebuild (`/admin/reindex` with no `cadence`, or
@@ -123,48 +153,66 @@ def run_full_ingestion() -> dict[str, int]:
     return run_ingestion(cadence=None)
 
 
-def run_frequent_ingestion() -> dict[str, int]:
+def run_frequent_ingestion() -> dict[str, ScraperStats]:
     """Runs only frequent-cadence scrapers: cheap JSON feeds and the announcement
     board. Safe to run every scheduler tick."""
     return run_ingestion(cadence="frequent")
 
 
-def run_slow_ingestion() -> dict[str, int]:
+def run_slow_ingestion() -> dict[str, ScraperStats]:
     """Runs only slow-cadence scrapers: sources with no bulk endpoint that require one
     HTTP request per item (official course syllabi, professor profiles, recordings
     pages) and rarely change. Meant for a much longer scheduler interval."""
     return run_ingestion(cadence="slow")
 
 
-def _run_ingestion_locked(cadence: str | None) -> dict[str, int]:
-    stats: dict[str, int] = {}
+def _run_ingestion_locked(
+    cadence: str | None,
+    progress_cb: ProgressCallback | None = None,
+) -> dict[str, ScraperStats]:
+    stats: dict[str, ScraperStats] = {}
     with SessionLocal() as db:
-        for entry in SCRAPERS:
-            if not entry.enabled:
-                continue
-            # Admin-editable override on top of the hardcoded default — lets an admin
-            # disable a misbehaving scraper (e.g. a site layout change breaking it)
-            # without a redeploy. Can only turn an enabled scraper off, never turn a
-            # hardcoded-disabled stub on (those raise NotImplementedError).
-            if not get_bool_setting(db, f"scraper_enabled:{entry.name}", True):
-                continue
-            if cadence is not None and entry.cadence != cadence:
-                continue
-            count = 0
+        # Admin-editable override on top of the hardcoded default — lets an admin
+        # disable a misbehaving scraper (e.g. a site layout change breaking it) without
+        # a redeploy. Can only turn an enabled scraper off, never turn a hardcoded-
+        # disabled stub on (those raise NotImplementedError).
+        active = [
+            entry
+            for entry in SCRAPERS
+            if entry.enabled
+            and get_bool_setting(db, f"scraper_enabled:{entry.name}", True)
+            and (cadence is None or entry.cadence == cadence)
+        ]
+        total = len(active)
+
+        for done, entry in enumerate(active):
+            if progress_cb is not None:
+                progress_cb(done, total, entry.name)
+            s = ScraperStats()
             try:
                 for ndoc in entry.fn():
                     try:
                         with db.begin_nested():
-                            ingest_normalized_document(db, ndoc)
+                            _, outcome = ingest_normalized_document(db, ndoc)
                     except Exception:
                         logger.exception("Failed to ingest %s (%s)", ndoc.url, entry.name)
+                        s.failed += 1
                         continue
-                    count += 1
-                    if count % 20 == 0:
+                    s.seen += 1
+                    if outcome == "new":
+                        s.new += 1
+                    elif outcome == "updated":
+                        s.updated += 1
+                    else:
+                        s.unchanged += 1
+                    if s.seen % 20 == 0:
                         db.commit()
                 db.commit()
             except Exception:
                 logger.exception("Scraper %s failed", entry.name)
                 db.rollback()
-            stats[entry.name] = count
+            stats[entry.name] = s
+
+        if progress_cb is not None:
+            progress_cb(total, total, None)
     return stats

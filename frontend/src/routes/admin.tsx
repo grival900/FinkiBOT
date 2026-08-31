@@ -1,6 +1,15 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut, type AuthUser, type SiteSettings } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  apiDelete,
+  apiGet,
+  apiPatch,
+  apiPost,
+  apiPut,
+  type AuthUser,
+  type ReindexStatus,
+  type SiteSettings,
+} from "@/lib/api";
 import { Notice, Page } from "@/components/Page";
 import { useI18n } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth";
@@ -58,8 +67,215 @@ function AdminPage() {
           </button>
         ))}
       </div>
-      {tab === "users" ? <UsersSection currentUserId={user.id} /> : <SettingsSection />}
+      {tab === "users" ? (
+        <UsersSection currentUserId={user.id} />
+      ) : (
+        <div className="space-y-6">
+          <ReindexSection />
+          <SettingsSection />
+        </div>
+      )}
     </Page>
+  );
+}
+
+type Cadence = "full" | "frequent" | "slow";
+
+function fmtDuration(seconds: number | null): string {
+  if (seconds == null) return "";
+  const total = Math.round(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function ReindexSection() {
+  const { t } = useI18n();
+  const [status, setStatus] = useState<ReindexStatus | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (timer.current !== null) {
+      clearInterval(timer.current);
+      timer.current = null;
+    }
+  }, []);
+
+  const poll = useCallback(async () => {
+    try {
+      const s = await apiGet<ReindexStatus>("/admin/reindex/status");
+      setStatus(s);
+      if (s.state !== "running") stopPolling();
+    } catch {
+      /* transient — keep the interval and try again on the next tick */
+    }
+  }, [stopPolling]);
+
+  const startPolling = useCallback(() => {
+    stopPolling();
+    void poll();
+    timer.current = setInterval(poll, 1500);
+  }, [poll, stopPolling]);
+
+  // Resume the live view if a run is already in flight when this mounts (e.g. after a
+  // page reload mid-reindex).
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<ReindexStatus>("/admin/reindex/status")
+      .then((s) => {
+        if (cancelled) return;
+        setStatus(s);
+        if (s.state === "running") startPolling();
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      stopPolling();
+    };
+  }, [startPolling, stopPolling]);
+
+  async function run(cadence: Cadence) {
+    setStartError(null);
+    setStatus({
+      state: "running",
+      cadence,
+      started_at: null,
+      finished_at: null,
+      duration_seconds: null,
+      progress_done: 0,
+      progress_total: 0,
+      current_scraper: null,
+      scrapers: [],
+      seed_refreshed: false,
+      seed_document_count: null,
+      error: null,
+    });
+    try {
+      const qs = cadence === "full" ? "" : `?cadence=${cadence}`;
+      await apiPost(`/admin/reindex${qs}`, {});
+    } catch (err) {
+      // 409 just means a run is already going — polling will pick it up. Anything else
+      // is a real failure to start.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("409")) {
+        setStartError(msg);
+        setStatus(null);
+        return;
+      }
+    }
+    startPolling();
+  }
+
+  const running = status?.state === "running";
+  const pct =
+    status && status.progress_total > 0
+      ? Math.round((status.progress_done / status.progress_total) * 100)
+      : null;
+
+  return (
+    <div className="max-w-2xl rounded-lg border border-border bg-card p-4">
+      <h2 className="mb-1 text-sm font-semibold">{t("reindex_title")}</h2>
+      <p className="mb-3 text-xs text-muted-foreground">{t("reindex_hint")}</p>
+      <div className="flex flex-wrap gap-2">
+        {(["full", "frequent", "slow"] as const).map((c, i) => (
+          <button
+            key={c}
+            type="button"
+            disabled={running}
+            onClick={() => run(c)}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-sm disabled:opacity-50",
+              i === 0 ? "bg-primary font-medium text-primary-foreground" : "border border-border",
+            )}
+          >
+            {running && status?.cadence === c
+              ? t("reindex_running")
+              : t(`reindex_${c}` as "reindex_full" | "reindex_frequent" | "reindex_slow")}
+          </button>
+        ))}
+      </div>
+
+      {running ? (
+        <div className="mt-4">
+          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className={cn(
+                "h-full rounded-full bg-primary transition-all duration-500",
+                pct === null && "w-1/3 animate-pulse",
+              )}
+              style={pct === null ? undefined : { width: `${pct}%` }}
+            />
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {status && status.progress_total > 0
+              ? `${status.progress_done} / ${status.progress_total} ${t("reindex_sources")}`
+              : t("reindex_running")}
+            {status?.current_scraper ? ` · ${status.current_scraper}` : ""}
+            {status?.duration_seconds != null
+              ? ` · ${t("reindex_elapsed")} ${fmtDuration(status.duration_seconds)}`
+              : ""}
+          </p>
+        </div>
+      ) : null}
+
+      {status?.state === "done" ? (
+        <div className="mt-4">
+          <ReindexResult status={status} />
+        </div>
+      ) : null}
+
+      {status?.state === "error" ? (
+        <div className="mt-3">
+          <Notice kind="error">
+            {t("error")}: {status.error ?? "reindex failed"}
+          </Notice>
+        </div>
+      ) : null}
+      {startError ? (
+        <div className="mt-3">
+          <Notice kind="error">
+            {t("error")}: {startError}
+          </Notice>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ReindexResult({ status }: { status: ReindexStatus }) {
+  const { t } = useI18n();
+  const changed = status.scrapers.filter((s) => s.new > 0 || s.updated > 0 || s.failed > 0);
+  const totalNew = status.scrapers.reduce((n, s) => n + s.new, 0);
+  const totalUpdated = status.scrapers.reduce((n, s) => n + s.updated, 0);
+  const totalSeen = status.scrapers.reduce((n, s) => n + s.seen, 0);
+
+  return (
+    <Notice kind="info">
+      <span className="font-medium">
+        {t("reindex_done_in")} {fmtDuration(status.duration_seconds)}
+      </span>{" "}
+      · {totalSeen} {t("reindex_seen")}, {totalNew} {t("reindex_new")}, {totalUpdated}{" "}
+      {t("reindex_updated")}
+      {status.seed_refreshed ? (
+        <>
+          {" "}
+          · {t("reindex_seed_refreshed")} ({status.seed_document_count} {t("reindex_documents")})
+        </>
+      ) : null}
+      {changed.length > 0 ? (
+        <ul className="mt-2 space-y-0.5">
+          {changed.map((s) => (
+            <li key={s.name} className="font-mono text-xs">
+              {s.name} — {s.new} {t("reindex_new")}, {s.updated} {t("reindex_updated")}
+              {s.failed > 0 ? `, ${s.failed} ${t("reindex_failed")}` : ""}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-1 text-xs">{t("reindex_no_changes")}</p>
+      )}
+    </Notice>
   );
 }
 

@@ -10,7 +10,7 @@ const dict = {
   nav_quiz: { mk: "Квиз", en: "Quiz" },
   nav_subscribe: { mk: "Известувања", en: "Notifications" },
   nav_insights: { mk: "Insights", en: "Insights" },
-  nav_mcp: { mk: "MCP алатки", en: "MCP tools" },
+  nav_mcp: { mk: "MCP Алатки", en: "MCP Tools" },
   profile: { mk: "Профил", en: "Profile" },
   guest: { mk: "Гостин", en: "Guest" },
   no_login: { mk: "Без најава", en: "No sign-in needed" },
@@ -77,8 +77,8 @@ const dict = {
   run: { mk: "Изврши", en: "Run" },
   results_count: { mk: "Резултати", en: "Results" },
   mcp_intro: {
-    mk: "Овие MCP алатки ги изложуваме кон надворешни AI клиенти (на пр. Claude Desktop). Тука можеш да ги пробаш директно.",
-    en: "These MCP tools are exposed to external AI clients (e.g. Claude Desktop). You can try them here.",
+    mk: "Овие MCP алатки ги изложуваат индексираните податоци од FINKI како стандардизирани, повикливи алатки. Тука можеш да ги пробаш директно.",
+    en: "These MCP Tools expose FINKI's indexed data as standardized, callable tools. You can try them here.",
   },
   login: { mk: "Најава", en: "Log in" },
   register: { mk: "Регистрација", en: "Sign up" },
@@ -113,6 +113,31 @@ const dict = {
   admin_badge: { mk: "Админ", en: "Admin" },
   inactive_badge: { mk: "Неактивна", en: "Inactive" },
   unlimited: { mk: "неограничено", en: "unlimited" },
+  reindex_title: { mk: "Ре-индексирање", en: "Reindexing" },
+  reindex_hint: {
+    mk: "Ги активира скреперите, ги внесува новите документи во базата и го освежува пакуваниот seed (backend/seed/documents.json) за да добијат нови инсталации свежа содржина без сопствено скрепирање. Комитувај го seed-от за да се сподели.",
+    en: "Runs the scrapers, ingests new documents into the database, and refreshes the bundled seed (backend/seed/documents.json) so fresh installs get current content without scraping themselves. Commit the seed to share it.",
+  },
+  reindex_full: { mk: "Целосно", en: "Full" },
+  reindex_frequent: { mk: "Брзо (соопштенија)", en: "Frequent (announcements)" },
+  reindex_slow: { mk: "Бавно (курсеви, професори)", en: "Slow (courses, professors)" },
+  reindex_running: { mk: "Се извршува…", en: "Running…" },
+  reindex_sources: { mk: "извори", en: "sources" },
+  reindex_elapsed: { mk: "поминато", en: "elapsed" },
+  reindex_done_in: { mk: "Готово за", en: "Done in" },
+  reindex_no_changes: {
+    mk: "Нема нови или изменети документи — сè е веќе актуелно.",
+    en: "No new or changed documents — everything is already up to date.",
+  },
+  reindex_seed_refreshed: {
+    mk: "Пакуваниот seed е освежен",
+    en: "Bundled seed refreshed",
+  },
+  reindex_documents: { mk: "документи", en: "documents" },
+  reindex_new: { mk: "нови", en: "new" },
+  reindex_updated: { mk: "изменети", en: "updated" },
+  reindex_seen: { mk: "видени", en: "seen" },
+  reindex_failed: { mk: "неуспешни", en: "failed" },
 } as const;
 
 export type TKey = keyof typeof dict;

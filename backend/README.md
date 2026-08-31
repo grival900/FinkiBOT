@@ -47,20 +47,33 @@ should run first (see "First time on a new machine" in the root README):
 python -m backend.scripts.seed
 ```
 
-Run an MCP server standalone (e.g. to point Claude Desktop or an MCP inspector at it):
+Run an MCP server standalone (e.g. to point an MCP inspector at it):
 
 ```bash
 python -m backend.mcp_servers.official_mcp.server
 python -m backend.mcp_servers.finki_hub_mcp.server
 ```
 
-Trigger a manual scrape + index pass:
+Trigger a manual scrape + index pass (also wired to a **Reindex** button on the admin
+panel's Settings tab):
 
 ```bash
 curl -X POST http://localhost:8000/admin/reindex               # everything
 curl -X POST "http://localhost:8000/admin/reindex?cadence=frequent"  # cheap sources only
 curl -X POST "http://localhost:8000/admin/reindex?cadence=slow"      # expensive sources only
+curl http://localhost:8000/admin/reindex/status                 # progress + per-scraper diff of the last run
 ```
+
+The run is asynchronous (returns immediately); `GET /admin/reindex/status` reports
+`running` → `done`/`error` with a per-scraper `new`/`updated`/`unchanged` breakdown,
+which is what the admin panel's button polls to show its progress bar and result.
+
+Unless `?refresh_seed=false` is passed, a run that indexes anything then rewrites the
+bundled seed (`backend/seed/documents.json`) from the full `documents` table, so a
+fresh clone's `python -m backend.scripts.seed` starts from current content. The file
+only changes on the machine running this backend — commit it to share the refresh
+(same effect as running `python -m backend.scripts.export_seed` by hand). The
+scheduler's own runs never touch the seed.
 
 Each scraper in `registry.py` is tagged `frequent` or `slow`, and the two run on
 separate scheduler intervals (`SCHEDULER_INTERVAL_MINUTES` and
