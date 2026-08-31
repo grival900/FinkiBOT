@@ -1,6 +1,7 @@
 import logging
 import secrets
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
@@ -8,7 +9,15 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from backend.api.schemas import AdminUserPatch, ScraperEnabledOut, SiteSettingsOut, SiteSettingsPatch, UserOut
+from backend.api.schemas import (
+    AdminUserPatch,
+    ReindexStatusOut,
+    ScraperEnabledOut,
+    ScraperStatOut,
+    SiteSettingsOut,
+    SiteSettingsPatch,
+    UserOut,
+)
 from backend.core.auth import require_admin
 from backend.core.config import get_settings
 from backend.core.site_settings import (
@@ -34,24 +43,92 @@ from backend.models import User
 from backend.notifier.emailer import send_password_reset_email
 from backend.notifier.job import run_notification_job
 from backend.scrapers.registry import SCRAPERS
+from backend.scripts.export_seed import SEED_PATH, export_seed
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
 
-def _background_reindex(cadence: str | None) -> None:
+@dataclass
+class _ReindexJob:
+    """In-memory state of the most recent manual reindex, polled by the admin panel to
+    drive its progress bar and result summary. Only one runs at a time (see the
+    ingestion lock in pipeline.py and the guard in `reindex()`), so a single module
+    global is enough — it survives until the next run or a server restart."""
+
+    cadence: str
+    state: Literal["running", "done", "error"] = "running"
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: datetime | None = None
+    progress_done: int = 0
+    progress_total: int = 0
+    current_scraper: str | None = None
+    scrapers: list[ScraperStatOut] = field(default_factory=list)
+    seed_refreshed: bool = False
+    seed_document_count: int | None = None
+    error: str | None = None
+
+
+_reindex_lock = threading.Lock()
+_reindex_job: _ReindexJob | None = None
+
+
+def _background_reindex(cadence: str | None, refresh_seed: bool) -> None:
+    global _reindex_job
+    job = _ReindexJob(cadence=cadence or "full")
+    with _reindex_lock:
+        _reindex_job = job
+
+    def on_progress(done: int, total: int, current: str | None) -> None:
+        job.progress_done, job.progress_total, job.current_scraper = done, total, current
+
     try:
-        stats = run_ingestion(cadence)
-        logger.info("Reindex (%s) finished: %s", cadence or "full", stats)
-    except Exception:
+        stats = run_ingestion(cadence, progress_cb=on_progress)
+    except Exception as exc:
         logger.exception("Background reindex failed")
+        job.error = str(exc) or exc.__class__.__name__
+        job.state = "error"
+        job.finished_at = datetime.now(timezone.utc)
+        return
+
+    logger.info("Reindex (%s) finished: %s", cadence or "full", stats)
+    job.scrapers = [
+        ScraperStatOut(
+            name=name, seen=s.seen, new=s.new, updated=s.updated, unchanged=s.unchanged, failed=s.failed
+        )
+        for name, s in stats.items()
+    ]
+
+    if not stats:
+        # run_ingestion returns {} only when another ingestion already holds the lock.
+        job.error = "Another indexing run was already in progress — nothing was done."
+        job.state = "error"
+        job.finished_at = datetime.now(timezone.utc)
+        return
+
+    if refresh_seed:
+        try:
+            job.seed_document_count = export_seed()
+            job.seed_refreshed = True
+            logger.info(
+                "Refreshed bundled seed: %d documents written to %s", job.seed_document_count, SEED_PATH
+            )
+        except Exception:
+            logger.exception("Reindex finished but refreshing the bundled seed failed")
+
+    job.state = "done"
+    job.finished_at = datetime.now(timezone.utc)
 
 
 @router.post("/reindex")
-def reindex(cadence: Literal["frequent", "slow"] | None = None) -> dict[str, str]:
+def reindex(
+    cadence: Literal["frequent", "slow"] | None = None,
+    refresh_seed: bool = True,
+) -> dict[str, str]:
     """Kicks off a reindex in a background thread and returns immediately so the
-    server stays responsive for search/chat requests during the run.
+    server stays responsive for search/chat requests during the run. Poll
+    `GET /admin/reindex/status` for progress and the final per-scraper diff.
 
     `cadence` scopes the run: "frequent" hits only cheap/time-sensitive sources
     (announcements, JSON feeds — seconds to low minutes), "slow" hits only the
@@ -59,10 +136,46 @@ def reindex(cadence: Literal["frequent", "slow"] | None = None) -> dict[str, str
     syllabi, professor profiles, recordings — 100+ rate-limited requests, several
     minutes). Omit for a full reindex of everything (also several minutes, dominated
     by the same slow sources). The scheduler already runs both cadences on their own
-    intervals (see `scheduler.py`) — this endpoint is for an on-demand/manual run."""
-    thread = threading.Thread(target=_background_reindex, args=(cadence,), daemon=True)
+    intervals (see `scheduler.py`) — this endpoint is for an on-demand/manual run.
+
+    When `refresh_seed` is true (the default), the bundled seed
+    (`backend/seed/documents.json`) is rewritten from the full `documents` table once
+    the run finishes, so a fresh clone that runs `python -m backend.scripts.seed`
+    starts from current content instead of a stale snapshot. The file is only updated
+    on the machine running this backend — commit it to actually share the refresh.
+    Pass `refresh_seed=false` on a deployment where the repo checkout isn't writable
+    or shouldn't change."""
+    with _reindex_lock:
+        if _reindex_job is not None and _reindex_job.state == "running":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A reindex is already running")
+    thread = threading.Thread(target=_background_reindex, args=(cadence, refresh_seed), daemon=True)
     thread.start()
     return {"status": f"reindex ({cadence or 'full'}) started in background"}
+
+
+@router.get("/reindex/status", response_model=ReindexStatusOut)
+def reindex_status() -> ReindexStatusOut:
+    """Progress + result of the most recent manual reindex. `state` is "idle" until one
+    has been triggered since the last server start, then "running" → "done"/"error"."""
+    job = _reindex_job
+    if job is None:
+        return ReindexStatusOut(state="idle")
+
+    end = job.finished_at or datetime.now(timezone.utc)
+    return ReindexStatusOut(
+        state=job.state,
+        cadence=job.cadence,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+        duration_seconds=(end - job.started_at).total_seconds(),
+        progress_done=job.progress_done,
+        progress_total=job.progress_total,
+        current_scraper=job.current_scraper,
+        scrapers=job.scrapers,
+        seed_refreshed=job.seed_refreshed,
+        seed_document_count=job.seed_document_count,
+        error=job.error,
+    )
 
 
 @router.post("/notify")
