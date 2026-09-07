@@ -21,63 +21,158 @@ backend/    FastAPI app, scrapers, RAG/ingestion pipeline, MCP servers, notifier
 frontend/   React web app (chat, search, quiz, subscribe, MCP playground)
 ```
 
-For module-by-module detail, non-Docker local dev, and known scraper gaps, see
+For module-by-module detail and known scraper gaps, see
 [backend/README.md](backend/README.md).
 
 ## Prerequisites
 
-- **Docker Desktop**, running
+- **Docker Desktop**, running — used for the database and two small helper tools
+- **Python 3.12** and **Node 22** — the backend and frontend run directly on your machine
 - A free **Gemini API key** — [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (no card required)
 
-That's it — everything else (Postgres, the embedding model, Node, Python) runs inside
-containers.
+The database (Postgres), a fake mail inbox (Mailhog) and a database browser (Adminer)
+run in Docker. The backend API and the website run on your machine, so saving a code
+change reloads it right away. (If you'd rather not install Python and Node, see
+"Run everything in Docker instead" near the bottom.)
 
-## Getting started — first time on a new machine
+## First-time setup
 
-Run these in order from the repo root:
+Run these once, in order, from the repo root.
 
 ```bash
-# 1. Copy the env template and fill in GEMINI_API_KEY (required for chat + quiz) and
-#    JWT_SECRET_KEY (required — signs login sessions, the app won't start without it):
-#    python -c "import secrets; print(secrets.token_hex(32))"
+# 1. Make your own settings file from the template, then open backend/.env and fill in:
+#      GEMINI_API_KEY  — from the link above; needed for chat and the quiz maker
+#      JWT_SECRET_KEY  — any long random string; needed for logins. Make one with:
+#                        python -c "import secrets; print(secrets.token_hex(32))"
 cp backend/.env.sample backend/.env
 
-# 2. Build and start everything: Postgres, backend API, frontend
-docker compose up --build
+# 2. Start the database + helper tools in Docker, in the background
+docker compose up -d
+
+# 3. Make an isolated Python environment for the backend and install its libraries
+python -m venv .venv
+.venv\Scripts\Activate.ps1                        # Windows PowerShell
+#   macOS / Linux instead:  source .venv/bin/activate
+pip install -r backend/requirements.txt
+
+# 4. Create the database tables (this is Alembic — see "Database changes" below)
+alembic -c backend/alembic.ini upgrade head
+
+# 5. Load a saved snapshot of scraped data + create a dev admin login.
+#    ~2 minutes, fully offline — nothing is fetched from finki.ukim.mk.
+python -m backend.scripts.seed
+
+# 6. Install the website's libraries
+cd frontend
+npm install
+cd ..
 ```
 
-Leave that running in one terminal. In a second terminal, populate the database —
-it starts empty on a brand-new machine, so nothing will show up in chat/search until
-you load some data. Two ways to do that:
+The snapshot in step 5 (`backend/seed/documents.json`) is from some point in the past,
+so it may be missing the newest announcements — that's expected. See "Loading and
+refreshing data" below to pull current data.
 
+## Running it (every day)
+
+Three things run at the same time, so open three terminal tabs. Run everything from
+the repo root unless a step says otherwise.
+
+**Tab 1 — database + helper tools (Docker):**
 ```bash
-# 3. Fast path (recommended): load the bundled seed — no live scraping, no requests
-#    to finki.ukim.mk/finki-hub.com at all, done in about 2 minutes
-docker compose exec backend python -m backend.scripts.seed
+docker compose up -d          # "-d" = in the background. Once per work session
+                              # (or after a reboot). Stop later with: docker compose down
 ```
 
-The seed (`backend/seed/documents.json`) is a snapshot taken at some point in the
-past, so it may be missing the newest announcements — that's expected, not a bug.
-Once the scheduler is on (or you run a manual reindex, see "Day-to-day" below) it
-catches up to live data on top of the seed.
-
+**Tab 2 — backend API:**
 ```bash
-# Alternative: skip the seed and scrape live instead — cheap/time-sensitive sources
-# first (well under a minute)...
-docker compose exec backend python -m backend.scripts.reindex frequent
-# ...then the expensive ones: official course syllabi, professor profiles, finki-hub
-# recordings — one HTTP request per item each, several minutes
-docker compose exec backend python -m backend.scripts.reindex slow
+.venv\Scripts\Activate.ps1                        # switch on the Python environment (every new tab)
+alembic -c backend/alembic.ini upgrade head       # apply any new database changes; does nothing if there are none
+uvicorn backend.api.main:app --reload --reload-dir backend
+```
+`--reload` restarts the API for you whenever you save a `.py` file. Leave it running.
+
+**Tab 3 — website:**
+```bash
+cd frontend
+npm run dev                   # leave running; refreshes the page when you save frontend files
 ```
 
-That's the whole setup. Once it finishes, open:
+Then open:
 
-| Service | URL |
+| What | URL |
 |---|---|
-| Frontend | http://localhost:5173 |
-| Backend API docs | http://localhost:8000/docs |
-| Mailhog (catches subscription emails, nothing sent for real) | http://localhost:8025 |
-| Adminer (browse the database directly) | http://localhost:8090 — server `db`, user/pass/db `finkibot` |
+| The app | http://localhost:5173 |
+| API reference (auto-generated) | http://localhost:8000/docs |
+| Mailhog — shows subscription emails (none are really sent) | http://localhost:8025 |
+| Adminer — browse the database by hand | http://localhost:8090 — server `db`, username / password / database all `finkibot` |
+
+## Updating after `git pull`
+
+After pulling new code, run whichever of these apply. If unsure, run all three — each
+does nothing when there's nothing to do.
+
+```bash
+.venv\Scripts\Activate.ps1
+
+# 1. Backend libraries changed?  (backend/requirements.txt was in the pull)
+pip install -r backend/requirements.txt
+
+# 2. Database changed?  (a new file appeared in backend/alembic/versions/)
+alembic -c backend/alembic.ini upgrade head
+
+# 3. Website libraries changed?  (frontend/package.json or package-lock.json was in the pull)
+cd frontend && npm install && cd ..
+```
+
+Then restart Tab 2 and Tab 3 (Ctrl+C, run the command again) — auto-reload only
+watches your code, not newly installed libraries.
+
+`git diff --stat HEAD@{1} HEAD` shows what a pull actually changed.
+
+## Database changes (Alembic)
+
+Which tables and columns the database has is defined by numbered files in
+`backend/alembic/versions/`. **Alembic** is the tool that applies them. Always run it
+from the repo root with `-c backend/alembic.ini`, or it won't find its files.
+
+```bash
+# Apply everything not yet applied — run after setup and after every git pull.
+# Safe anytime; it skips whatever is already done.
+alembic -c backend/alembic.ini upgrade head
+
+# Am I up to date? These two should print the same number.
+alembic -c backend/alembic.ini current    # where the database is
+alembic -c backend/alembic.ini heads      # where the code expects it to be
+
+# You edited backend/models.py? Generate a change file, eyeball it, then apply it.
+alembic -c backend/alembic.ini revision --autogenerate -m "what you changed"
+#   → open the new file in backend/alembic/versions/ and check it looks sane
+alembic -c backend/alembic.ini upgrade head
+
+# Undo the most recent change.
+alembic -c backend/alembic.ini downgrade -1
+```
+
+## Loading and refreshing data
+
+The database starts empty; step 5 of setup fills it from the saved snapshot. To pull
+fresh data from the live sites later:
+
+```bash
+.venv\Scripts\Activate.ps1
+python -m backend.scripts.reindex frequent   # announcements + quick sources — seconds
+python -m backend.scripts.reindex slow       # course syllabi, professor pages — minutes
+```
+
+This never happens on its own in dev. Your data survives restarts — it lives in a
+Docker volume named `finkibot_pgdata`, separate from the containers. The only things
+that wipe it are `docker compose down -v` (the `-v` deletes volumes) or removing that
+volume by hand.
+
+Maintainers: after building up fresh data, `python -m backend.scripts.export_seed`
+rewrites `backend/seed/documents.json` so the next person's setup starts closer to
+current — commit the changed file like any other change. (The admin panel's
+**Reindex** button already does this after each run.)
 
 ## Accounts and admin access
 
@@ -86,82 +181,59 @@ exist to gate the admin panel (`/admin` — user management, live-editable scrap
 scheduler settings). Registration (`/register`) is open to anyone but never grants
 admin rights by itself.
 
-`python -m backend.scripts.seed` (step 3 above) also creates a default admin account
+`python -m backend.scripts.seed` (setup step 5) also creates a default admin account
 for local dev, so there's always a way into `/admin` on a fresh machine without SMTP
 set up: **`admin@email.com` / `admin`**. Change its password after logging in, or use
 it only for local dev — for anything shared/deployed, promote a real account instead:
 
 ```bash
+.venv\Scripts\Activate.ps1
 # 1. Register normally through the site (or POST /auth/register) first
 # 2. Then promote that account from the command line:
-docker compose exec backend python -m backend.scripts.create_admin you@example.com
+python -m backend.scripts.create_admin you@example.com
 ```
 
-Optionally, confirm the backend tests pass:
+## Running the tests
 
 ```bash
-docker compose exec backend pytest backend/tests
+.venv\Scripts\Activate.ps1
+pytest backend/tests
 ```
 
-## Day-to-day (after the first-time setup above)
+## Handy commands
 
 ```bash
-docker compose up -d      # start everything (no --build needed unless you changed
-                           # the Dockerfile, requirements.txt, or package.json)
-docker compose down       # stop everything — your data is untouched (see below)
+docker compose ps                 # which containers are running
+docker compose logs -f db         # follow a container's logs (db / mailhog / adminer)
+docker compose down               # stop the containers (your data stays — see above)
 ```
 
-Both backend and frontend are bind-mounted with hot reload already wired up, so
-editing code and saving just works — no rebuild, no restart.
+The first time you start the backend it downloads the embedding model
+(`BAAI/bge-m3`, ~2 GB) into `~/.cache/huggingface`. That happens once; later starts
+are fast.
 
-**Does my data survive a restart?** Yes. Scraped documents live in a named Docker
-volume (`finkibot_pgdata`), completely separate from the containers themselves —
-`docker compose down` / `up`, restarting Docker Desktop, even rebuilding the images,
-none of that touches it. Nothing re-scrapes or reseeds automatically on startup. The
-*only* things that lose it are `docker compose down -v` (the `-v` explicitly deletes
-volumes), manually removing the volume, or a fresh clone on a different machine —
-that last one is exactly what the seed/reindex step above is for.
+## Run everything in Docker instead (optional)
 
-Re-run the reindex whenever you want fresh data (new announcements, updated course
-info) — it doesn't happen automatically in dev (`ENABLE_SCHEDULER=false` in `.env`;
-when enabled, frequent sources refresh hourly and slow ones weekly by default — see
-`backend/README.md`):
+If you'd rather not install Python and Node — or you just want to check the container
+build still works — you can run the whole stack in Docker:
 
 ```bash
-docker compose exec backend python -m backend.scripts.reindex frequent  # seconds
-docker compose exec backend python -m backend.scripts.reindex slow      # minutes
+docker compose --profile full up --build
 ```
 
-If you've built up a lot of fresh content and want to refresh the bundled seed so
-future first-time setups start closer to current (maintainers only — this rewrites
-`backend/seed/documents.json`, commit it like any other change):
+`--profile full` adds the `backend` and `frontend` containers; a plain
+`docker compose up` leaves them out (that's what the everyday setup above relies on).
+Run the data commands inside the container, e.g.:
 
 ```bash
-docker compose exec backend python -m backend.scripts.export_seed
+docker compose exec backend python -m backend.scripts.seed
+docker compose exec backend python -m backend.scripts.reindex frequent
 ```
 
-The admin panel's **Reindex** button (Settings tab) already does this automatically
-after each manual run — scrape, index, then rewrite the seed — so in practice you
-just review and commit the changed `documents.json`.
-
-Other useful commands:
-
-```bash
-docker compose ps                  # what's running
-docker compose logs -f backend     # tail logs (or: frontend, db, mailhog, adminer)
-docker compose up -d --build       # rebuild after touching Dockerfile/requirements.txt/package.json
-```
-
-> **Windows/Docker Desktop note:** the frontend's file-watcher doesn't always pick up
-> edits made from outside the container (a known bind-mount limitation). If a saved
-> change isn't showing up in the browser, run `docker compose restart frontend`.
->
-> Similarly, editing `backend/.env` requires recreating the backend container to take
-> effect — `docker compose restart backend` is not enough, since Docker Compose only
-> re-reads `.env` on creation:
-> ```bash
-> docker compose up -d --force-recreate backend
-> ```
+Code still hot-reloads in this mode, but the frontend starts much more slowly and its
+file-watcher sometimes misses edits on Windows — `docker compose restart frontend` if
+a change doesn't show up. Editing `backend/.env` needs
+`docker compose up -d --force-recreate backend` to take effect.
 
 ## Where the LLM is used
 
