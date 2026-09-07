@@ -17,6 +17,15 @@ class Settings(BaseSettings):
 
     embedding_model_name: str = "BAAI/bge-m3"
 
+    # Chat retrieval: a retrieved chunk whose cosine similarity to the question is
+    # below this is dropped before it can reach the model's context or the cited
+    # source list. Measured on this corpus with bge-m3: a genuinely on-topic chunk
+    # scores ~0.45-0.8, an incidental keyword overlap (a name mentioned in passing on
+    # an unrelated page) ~0.33-0.40 — so 0.40 clears the noise while keeping real
+    # syllabus/bio prose, which sits lower than a short exact-title card. Tunable at
+    # runtime without a redeploy via a `chat_min_score` row in the site_settings table.
+    chat_min_score: float = 0.40
+
     smtp_host: str = "localhost"
     smtp_port: int = 1025
     smtp_user: str = ""

@@ -1,6 +1,16 @@
 from datetime import datetime, timezone
 
-from backend.api.routers.chat import build_context, citation_url, prefer_current_year
+from backend.api.routers.chat import (
+    CITATION_SCORE_GAP,
+    MAX_CITED_SOURCES,
+    _sources_cut_index,
+    build_context,
+    build_sources_block,
+    citation_url,
+    prefer_current_year,
+    select_citation_sources,
+    source_label,
+)
 from backend.core.retrieval import SearchResult
 
 
@@ -92,3 +102,127 @@ def test_build_context_embeds_internal_link_for_finki_hub_course():
     context = build_context(results)
     assert "http://localhost:5173/documents/abc-123" in context
     assert "predmeti.finki-hub.com" not in context
+
+
+def test_select_citation_sources_drops_the_low_scoring_tail():
+    """The motivating bug: a name query returned the right professor page at 0.7 plus
+    three unrelated pages at ~0.35 that only mention the name in passing — all four got
+    listed as sources, making a correct answer look like it cited the wrong people."""
+    results = [
+        _result(document_id="right", score=0.72),
+        _result(document_id="tail-1", score=0.72 - CITATION_SCORE_GAP - 0.01),
+        _result(document_id="tail-2", score=0.30),
+    ]
+
+    picked = select_citation_sources(results)
+
+    assert [r.document_id for r in picked] == ["right"]
+
+
+def test_select_citation_sources_keeps_documents_within_the_gap():
+    results = [
+        _result(document_id="a", url="https://example.com/a", score=0.70),
+        _result(document_id="b", url="https://example.com/b", score=0.70 - CITATION_SCORE_GAP + 0.02),
+    ]
+
+    picked = select_citation_sources(results)
+
+    assert [r.document_id for r in picked] == ["a", "b"]
+
+
+def test_select_citation_sources_dedupes_by_document_and_caps_count():
+    results = [_result(document_id="dup", url="https://example.com/dup", chunk_text="chunk a", score=0.80)]
+    results += [_result(document_id="dup", url="https://example.com/dup", chunk_text="chunk b", score=0.79)]
+    results += [
+        _result(document_id=f"d{i}", url=f"https://example.com/d{i}", score=0.80)
+        for i in range(MAX_CITED_SOURCES + 3)
+    ]
+
+    picked = select_citation_sources(results)
+
+    assert len(picked) == MAX_CITED_SOURCES
+    assert picked[0].document_id == "dup"
+    assert [r.document_id for r in picked].count("dup") == 1
+
+
+def test_select_citation_sources_empty_input():
+    assert select_citation_sources([]) == []
+
+
+def test_select_citation_sources_dedupes_documents_that_resolve_to_one_url():
+    """A finki_hub course with no stable page of its own is cited at its official
+    syllabus URL — the same URL the official course document already uses. Two
+    near-tied results, one link: list it once."""
+    shared = "https://www.finki.ukim.mk/mk/subject/F23L3S141"
+    results = [
+        _result(document_id="official-doc", source="official", type="course", url=shared, score=0.80),
+        _result(
+            document_id="finki-hub-doc",
+            source="finki_hub",
+            type="course",
+            metadata={"official_subject_url": shared},
+            score=0.79,
+        ),
+    ]
+
+    picked = select_citation_sources(results)
+
+    assert [r.document_id for r in picked] == ["official-doc"]
+
+
+def test_source_label_distinguishes_same_title_across_sites():
+    official = _result(
+        title="Неструктурирани бази на податоци",
+        source="official",
+        type="course",
+        url="https://www.finki.ukim.mk/mk/subject/F23L3S141",
+    )
+    # finki_hub course with no official syllabus URL -> cited at our own /documents page,
+    # which _display_host still attributes to finki-hub.
+    finki_hub = _result(
+        title="Неструктурирани бази на податоци", source="finki_hub", type="course", metadata={}
+    )
+
+    assert source_label(official) == "Неструктурирани бази на податоци (предмет, finki.ukim.mk)"
+    assert source_label(finki_hub) == "Неструктурирани бази на податоци (предмет, finki-hub.com)"
+
+
+def test_source_label_uses_the_link_host_not_the_source_field():
+    """A finki_hub staff card stores a finki.ukim.mk profile URL — the label should say
+    where the link actually goes."""
+    staff = _result(
+        title="Слободан Калајџиски",
+        source="finki_hub",
+        type="staff",
+        url="https://www.finki.ukim.mk/mk/staff/slobodan-kalajdziski",
+    )
+    assert source_label(staff) == "Слободан Калајџиски (наставник, finki.ukim.mk)"
+
+
+def test_build_sources_block_labels_each_entry_with_its_site():
+    block = build_sources_block(
+        [_result(title="Т", source="official", type="professor", url="https://finki.ukim.mk/kadar/t/")]
+    )
+    assert "**Извори:**" in block
+    assert "- [Т (професор, finki.ukim.mk)]" in block
+
+
+def test_build_sources_block_is_empty_when_nothing_qualifies():
+    assert build_sources_block([]) == ""
+
+
+def test_sources_cut_index_finds_a_model_written_list_after_a_rule():
+    body = "Answer text here.\n\n---\n\n**Извори:**\n- [X](https://e.com)"
+    idx = _sources_cut_index(body)
+    assert idx is not None
+    assert body[:idx].rstrip() == "Answer text here."
+
+
+def test_sources_cut_index_finds_a_bare_heading():
+    body = "Одговор.\nSources:\n- x"
+    assert body[: _sources_cut_index(body)].rstrip() == "Одговор."
+
+
+def test_sources_cut_index_ignores_the_word_mid_sentence():
+    assert _sources_cut_index("Постојат два извори за оваа информација и двата се важни.") is None
+    assert _sources_cut_index("Plain answer with no list at all.") is None

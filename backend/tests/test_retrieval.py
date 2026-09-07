@@ -2,7 +2,15 @@ from datetime import date
 from unittest.mock import patch
 
 from backend.core import retrieval
-from backend.core.retrieval import SearchResult, _merge, _query_vectors, search
+from backend.core.retrieval import (
+    _RERANK_POOL,
+    TITLE_MATCH_BOOST,
+    SearchResult,
+    _apply_title_boost,
+    _merge,
+    _query_vectors,
+    search,
+)
 
 
 def _result(**overrides) -> SearchResult:
@@ -38,7 +46,9 @@ def test_search_with_source_filter_only_queries_that_source():
         mock_search.return_value = [_result(document_id="a", source="official", score=0.7)]
         results = search(db=None, query="бази", k=5, source="official")
 
-    mock_search.assert_called_once_with(None, [0.1, 0.2], 5, "official", None, None, None)
+    # k is widened to the rerank pool for the vector query (the title boost needs a
+    # deeper candidate list than a small caller k), then trimmed back afterwards.
+    mock_search.assert_called_once_with(None, [0.1, 0.2], _RERANK_POOL, "official", None, None, None)
     assert [r.document_id for r in results] == ["a"]
 
 
@@ -135,3 +145,67 @@ def test_search_caps_each_source_at_k_before_merging():
         results = search(db=None, query="bazi", k=3)
 
     assert len(results) == 3
+
+
+def test_search_min_score_drops_results_below_the_floor():
+    mixed = [
+        _result(document_id="strong", source="official", score=0.71),
+        _result(document_id="weak", source="official", score=0.32),
+    ]
+
+    def fake_search_by_vector(db, vector, k, source, type, date_from=None, date_to=None):
+        return mixed if source == "official" else []
+
+    with (
+        patch.object(retrieval, "_query_vectors", return_value=[[0.1, 0.2]]),
+        patch.object(retrieval, "_search_by_vector", side_effect=fake_search_by_vector),
+    ):
+        results = search(db=None, query="кога е испитната сесија", k=5, min_score=0.45)
+
+    assert [r.document_id for r in results] == ["strong"]
+
+
+def test_search_min_score_none_keeps_everything():
+    mixed = [
+        _result(document_id="strong", source="official", score=0.71),
+        _result(document_id="weak", source="official", score=0.12),
+    ]
+
+    def fake_search_by_vector(db, vector, k, source, type, date_from=None, date_to=None):
+        return mixed if source == "official" else []
+
+    with (
+        patch.object(retrieval, "_query_vectors", return_value=[[0.1, 0.2]]),
+        patch.object(retrieval, "_search_by_vector", side_effect=fake_search_by_vector),
+    ):
+        results = search(db=None, query="anything", k=5)
+
+    assert {r.document_id for r in results} == {"strong", "weak"}
+
+
+def test_title_boost_lifts_a_result_whose_title_contains_every_query_token():
+    on_topic = _result(document_id="prof-page", title="д-р Слободан Калајџиски", score=0.60)
+    mention = _result(document_id="co-author", title="д-р Андреа Кулаков", score=0.62)
+
+    _apply_title_boost("Слободан Калајџиски", [on_topic, mention])
+
+    assert on_topic.score == 0.60 + TITLE_MATCH_BOOST
+    assert mention.score == 0.62  # untouched — title shares no query token
+
+
+def test_title_boost_matches_across_a_latin_query_despite_transliteration_slack():
+    """"kalajdziski" transliterates to "калајѕиски" (dz digraph), not the real
+    "калајџиски" — the fuzzy per-token match is what still connects them."""
+    result = _result(document_id="prof-page", title="д-р Слободан Калајџиски", score=0.5)
+
+    _apply_title_boost("Slobodan Kalajdziski", [result])
+
+    assert result.score == 0.5 + TITLE_MATCH_BOOST
+
+
+def test_title_boost_is_a_noop_for_a_long_topical_query():
+    result = _result(document_id="course", title="Бази на податоци", score=0.5)
+
+    _apply_title_boost("што се учи на предметот бази на податоци и sql", [result])
+
+    assert result.score == 0.5
