@@ -30,20 +30,23 @@ def parse_session_entry(session_name: str, filename: str) -> tuple[str, str, dic
     return session_name, content, metadata
 
 
-def scrape_sessions() -> Iterator[NormalizedDocument]:
+def scrape_sessions(skip_urls: set[str] | None = None) -> Iterator[NormalizedDocument]:
     with make_client() as client:
         response = client.get(SESSIONS_JSON_URL)
         response.raise_for_status()
         data = response.json()
 
     for session_name, filename in data.items():
+        url = f"{SESSIONS_BASE_URL}/{filename}"
+        if skip_urls is not None and url in skip_urls:
+            continue
         title, content, metadata = parse_session_entry(session_name, filename)
 
         yield NormalizedDocument(
             source="finki_hub",
             type="schedule",
             title=title,
-            url=f"{SESSIONS_BASE_URL}/{filename}",
+            url=url,
             content=content,
             metadata=metadata,
         ).clean()

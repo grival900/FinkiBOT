@@ -15,7 +15,14 @@ def _reset_job():
     admin._reindex_job = None
 
 
-def _run(cadence=None, refresh_seed=True, ingestion=None, ingestion_exc=None, seed_exc=None):
+def _run(
+    cadence=None,
+    refresh_seed=True,
+    incremental=False,
+    ingestion=None,
+    ingestion_exc=None,
+    seed_exc=None,
+):
     """Invoke the background worker directly (the endpoint just spawns it in a thread)
     with run_ingestion / export_seed stubbed. Returns (run_ingestion_mock, export_seed_mock)."""
     ing_kw = {"side_effect": ingestion_exc} if ingestion_exc else {"return_value": ingestion or {}}
@@ -24,7 +31,7 @@ def _run(cadence=None, refresh_seed=True, ingestion=None, ingestion_exc=None, se
         patch.object(admin, "run_ingestion", **ing_kw) as run_ingestion,
         patch.object(admin, "export_seed", **seed_kw) as export_seed,
     ):
-        admin._background_reindex(cadence, refresh_seed)
+        admin._background_reindex(cadence, refresh_seed, incremental)
     return run_ingestion, export_seed
 
 
@@ -57,13 +64,22 @@ def test_reindex_passes_cadence_and_a_progress_callback_through():
     args, kwargs = run_ingestion.call_args
     assert args[0] == "frequent"
     assert callable(kwargs["progress_cb"])
+    assert kwargs["incremental"] is False
+
+
+def test_reindex_threads_the_incremental_flag_through_and_records_it():
+    run_ingestion, _ = _run(incremental=True, ingestion=STATS)
+
+    assert run_ingestion.call_args.kwargs["incremental"] is True
+    assert admin._reindex_job.incremental is True
+    assert admin.reindex_status().incremental is True
 
 
 def test_progress_callback_updates_the_job():
     """The callback pipeline.run_ingestion invokes must move the job's progress fields."""
     captured = {}
 
-    def fake_run_ingestion(cadence, progress_cb=None):
+    def fake_run_ingestion(cadence, progress_cb=None, incremental=False):
         progress_cb(0, 2, "official.announcements")
         progress_cb(1, 2, "finki_hub.courses")
         captured["mid"] = (admin._reindex_job.progress_done, admin._reindex_job.current_scraper)

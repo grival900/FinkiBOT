@@ -97,10 +97,12 @@ def parse_info_page_html(html: bytes | str) -> tuple[str, str]:
     return title, extract_info_page_text(soup)
 
 
-def scrape_info_pages() -> Iterator[NormalizedDocument]:
+def scrape_info_pages(skip_urls: set[str] | None = None) -> Iterator[NormalizedDocument]:
     with make_client() as client:
         for path in PAGE_URLS:
             url = f"{BASE_URL}{path}"
+            if skip_urls is not None and url in skip_urls:
+                continue
             try:
                 response = get(client, url)
             except httpx.HTTPError:

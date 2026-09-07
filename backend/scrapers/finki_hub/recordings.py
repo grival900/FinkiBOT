@@ -84,12 +84,14 @@ def parse_course_page_html(html: bytes | str) -> tuple[str, str]:
     return title, _to_markdown(main_el)
 
 
-def scrape_recordings() -> Iterator[NormalizedDocument]:
+def scrape_recordings(skip_urls: set[str] | None = None) -> Iterator[NormalizedDocument]:
     with make_client() as client:
         intro_response = get(client, f"{SNIMKI_URL}{INTRODUCTION_PATH}")
         urls = parse_course_links(intro_response.content)
 
         for url in urls:
+            if skip_urls is not None and url in skip_urls:
+                continue
             try:
                 response = get(client, url)
             except httpx.HTTPError:

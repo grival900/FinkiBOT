@@ -164,6 +164,18 @@ python -m backend.scripts.reindex frequent   # announcements + quick sources —
 python -m backend.scripts.reindex slow       # course syllabi, professor pages — minutes
 ```
 
+Add `--incremental` to fetch **only pages not already in the database** — much faster
+(it skips every page it already has), but it won't notice edits to pages already
+stored. Use it for a quick "pick up anything new" pass; run a plain (full) reindex now
+and then to catch changes to existing pages:
+
+```bash
+python -m backend.scripts.reindex slow --incremental
+```
+
+The admin panel's **Reindex** section has the same two modes: the cadence buttons plus
+a "New documents only (faster)" checkbox.
+
 This never happens on its own in dev. Your data survives restarts — it lives in a
 Docker volume named `finkibot_pgdata`, separate from the containers. The only things
 that wipe it are `docker compose down -v` (the `-v` deletes volumes) or removing that

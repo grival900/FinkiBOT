@@ -58,6 +58,7 @@ class _ReindexJob:
     global is enough — it survives until the next run or a server restart."""
 
     cadence: str
+    incremental: bool = False
     state: Literal["running", "done", "error"] = "running"
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
@@ -74,9 +75,9 @@ _reindex_lock = threading.Lock()
 _reindex_job: _ReindexJob | None = None
 
 
-def _background_reindex(cadence: str | None, refresh_seed: bool) -> None:
+def _background_reindex(cadence: str | None, refresh_seed: bool, incremental: bool = False) -> None:
     global _reindex_job
-    job = _ReindexJob(cadence=cadence or "full")
+    job = _ReindexJob(cadence=cadence or "full", incremental=incremental)
     with _reindex_lock:
         _reindex_job = job
 
@@ -84,7 +85,7 @@ def _background_reindex(cadence: str | None, refresh_seed: bool) -> None:
         job.progress_done, job.progress_total, job.current_scraper = done, total, current
 
     try:
-        stats = run_ingestion(cadence, progress_cb=on_progress)
+        stats = run_ingestion(cadence, progress_cb=on_progress, incremental=incremental)
     except Exception as exc:
         logger.exception("Background reindex failed")
         job.error = str(exc) or exc.__class__.__name__
@@ -125,6 +126,7 @@ def _background_reindex(cadence: str | None, refresh_seed: bool) -> None:
 def reindex(
     cadence: Literal["frequent", "slow"] | None = None,
     refresh_seed: bool = True,
+    incremental: bool = False,
 ) -> dict[str, str]:
     """Kicks off a reindex in a background thread and returns immediately so the
     server stays responsive for search/chat requests during the run. Poll
@@ -138,6 +140,11 @@ def reindex(
     by the same slow sources). The scheduler already runs both cadences on their own
     intervals (see `scheduler.py`) — this endpoint is for an on-demand/manual run.
 
+    `incremental` (default false): skip every page whose URL is already indexed and
+    only fetch genuinely new documents — much faster on the slow sources, but it does
+    not pick up edits to pages already stored (a full run does). Best paired with a
+    periodic full run.
+
     When `refresh_seed` is true (the default), the bundled seed
     (`backend/seed/documents.json`) is rewritten from the full `documents` table once
     the run finishes, so a fresh clone that runs `python -m backend.scripts.seed`
@@ -148,9 +155,12 @@ def reindex(
     with _reindex_lock:
         if _reindex_job is not None and _reindex_job.state == "running":
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A reindex is already running")
-    thread = threading.Thread(target=_background_reindex, args=(cadence, refresh_seed), daemon=True)
+    thread = threading.Thread(
+        target=_background_reindex, args=(cadence, refresh_seed, incremental), daemon=True
+    )
     thread.start()
-    return {"status": f"reindex ({cadence or 'full'}) started in background"}
+    mode = "incremental" if incremental else "full scan"
+    return {"status": f"reindex ({cadence or 'full'}, {mode}) started in background"}
 
 
 @router.get("/reindex/status", response_model=ReindexStatusOut)
@@ -165,6 +175,7 @@ def reindex_status() -> ReindexStatusOut:
     return ReindexStatusOut(
         state=job.state,
         cadence=job.cadence,
+        incremental=job.incremental,
         started_at=job.started_at,
         finished_at=job.finished_at,
         duration_seconds=(end - job.started_at).total_seconds(),

@@ -61,12 +61,20 @@ panel's Settings tab):
 curl -X POST http://localhost:8000/admin/reindex               # everything
 curl -X POST "http://localhost:8000/admin/reindex?cadence=frequent"  # cheap sources only
 curl -X POST "http://localhost:8000/admin/reindex?cadence=slow"      # expensive sources only
+curl -X POST "http://localhost:8000/admin/reindex?incremental=true"  # only fetch URLs not already indexed
 curl http://localhost:8000/admin/reindex/status                 # progress + per-scraper diff of the last run
 ```
 
 The run is asynchronous (returns immediately); `GET /admin/reindex/status` reports
 `running` → `done`/`error` with a per-scraper `new`/`updated`/`unchanged` breakdown,
 which is what the admin panel's button polls to show its progress bar and result.
+
+`incremental=true` (also the admin panel's "New documents only" checkbox, and
+`python -m backend.scripts.reindex ... --incremental`) hands each scraper the set of
+URLs already in `documents` for its source, so it skips re-fetching them — a fast pass
+that only pulls in genuinely new pages. The trade-off: an edit to a page already
+stored (same URL, changed content) is not noticed until the next full run, so alternate
+it with plain full runs.
 
 Unless `?refresh_seed=false` is passed, a run that indexes anything then rewrites the
 bundled seed (`backend/seed/documents.json`) from the full `documents` table, so a
@@ -91,9 +99,11 @@ separate scheduler intervals (`SCHEDULER_INTERVAL_MINUTES` and
   to a weekly cadence instead of hourly.
 
 A full reindex (no `cadence`, or the CLI script with no argument) runs both and takes
-as long as the slow pass does. None of this is something a site visitor ever waits
-through either way — `/search`, `/chat`, and the MCP tools only ever read whatever's
-already indexed, regardless of what's running in the background.
+as long as the slow pass does — unless `--incremental` / `incremental=true` is set,
+which skips every already-indexed URL and so finishes in seconds when little is new.
+None of this is something a site visitor ever waits through either way — `/search`,
+`/chat`, and the MCP tools only ever read whatever's already indexed, regardless of
+what's running in the background.
 
 ## The seed (`seed/documents.json`)
 

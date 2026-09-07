@@ -62,12 +62,14 @@ def parse_professor_html(html: bytes | str) -> tuple[str, str, str | None]:
     return name, element_to_text(content_el), email
 
 
-def scrape_professors() -> Iterator[NormalizedDocument]:
+def scrape_professors(skip_urls: set[str] | None = None) -> Iterator[NormalizedDocument]:
     with make_client() as client:
         listing_response = get(client, f"{BASE_URL}{LISTING_PATH}")
         urls = parse_listing_html(listing_response.content)
 
         for url in urls:
+            if skip_urls is not None and url in skip_urls:
+                continue
             try:
                 response = get(client, url)
             except httpx.HTTPError:

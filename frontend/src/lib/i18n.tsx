@@ -138,6 +138,11 @@ const dict = {
   reindex_updated: { mk: "изменети", en: "updated" },
   reindex_seen: { mk: "видени", en: "seen" },
   reindex_failed: { mk: "неуспешни", en: "failed" },
+  reindex_incremental: {
+    mk: "Само нови документи (побрзо — ги прескокнува веќе зачуваните страници, не забележува измени на нив)",
+    en: "New documents only (faster — skips pages already stored, won't notice edits to them)",
+  },
+  reindex_incremental_tag: { mk: "само нови", en: "new only" },
 } as const;
 
 export type TKey = keyof typeof dict;

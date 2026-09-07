@@ -121,11 +121,17 @@ def ingest_normalized_document(db: Session, ndoc: NormalizedDocument) -> tuple[D
 def run_ingestion(
     cadence: str | None = None,
     progress_cb: ProgressCallback | None = None,
+    incremental: bool = False,
 ) -> dict[str, ScraperStats]:
     """Runs every enabled scraper matching `cadence` ("frequent" or "slow"), or every
     enabled scraper if `cadence` is None. Returns per-scraper counts (seen / new /
     updated / unchanged / failed), used by /admin/reindex for its progress + result
     summary and by the scheduler for logging.
+
+    When `incremental` is true, every scraper is handed the set of URLs already in the
+    `documents` table for its source and skips re-fetching them — a fast "just pull in
+    anything new" pass. The trade-off: a page whose content changed but whose URL did
+    not is not noticed until the next full (non-incremental) run.
 
     `progress_cb(done, total, current)` is invoked before each scraper starts (with the
     count already finished and the name about to run) and once more at the end with
@@ -140,35 +146,45 @@ def run_ingestion(
         logger.warning("Skipping ingestion — another ingestion is already running")
         return {}
     try:
-        return _run_ingestion_locked(cadence, progress_cb)
+        return _run_ingestion_locked(cadence, progress_cb, incremental)
     finally:
         _ingestion_lock.release()
 
 
-def run_full_ingestion() -> dict[str, ScraperStats]:
+def run_full_ingestion(incremental: bool = False) -> dict[str, ScraperStats]:
     """Runs every enabled scraper, regardless of cadence. Slow (see `registry.py`) —
     prefer `run_frequent_ingestion()`/`run_slow_ingestion()` for the scheduler; this is
     for a deliberate one-off full rebuild (`/admin/reindex` with no `cadence`, or
     `python -m backend.scripts.reindex`)."""
-    return run_ingestion(cadence=None)
+    return run_ingestion(cadence=None, incremental=incremental)
 
 
-def run_frequent_ingestion() -> dict[str, ScraperStats]:
+def run_frequent_ingestion(incremental: bool = False) -> dict[str, ScraperStats]:
     """Runs only frequent-cadence scrapers: cheap JSON feeds and the announcement
     board. Safe to run every scheduler tick."""
-    return run_ingestion(cadence="frequent")
+    return run_ingestion(cadence="frequent", incremental=incremental)
 
 
-def run_slow_ingestion() -> dict[str, ScraperStats]:
+def run_slow_ingestion(incremental: bool = False) -> dict[str, ScraperStats]:
     """Runs only slow-cadence scrapers: sources with no bulk endpoint that require one
     HTTP request per item (official course syllabi, professor profiles, recordings
     pages) and rarely change. Meant for a much longer scheduler interval."""
-    return run_ingestion(cadence="slow")
+    return run_ingestion(cadence="slow", incremental=incremental)
+
+
+def _known_urls_by_source(db: Session) -> dict[str, set[str]]:
+    """{source: {every Document.url indexed for it}} — passed to scrapers on an
+    incremental run so they can skip pages already stored."""
+    known: dict[str, set[str]] = {}
+    for source, url in db.query(Document.source, Document.url):
+        known.setdefault(source, set()).add(url)
+    return known
 
 
 def _run_ingestion_locked(
     cadence: str | None,
     progress_cb: ProgressCallback | None = None,
+    incremental: bool = False,
 ) -> dict[str, ScraperStats]:
     stats: dict[str, ScraperStats] = {}
     with SessionLocal() as db:
@@ -184,13 +200,15 @@ def _run_ingestion_locked(
             and (cadence is None or entry.cadence == cadence)
         ]
         total = len(active)
+        known = _known_urls_by_source(db) if incremental else {}
 
         for done, entry in enumerate(active):
             if progress_cb is not None:
                 progress_cb(done, total, entry.name)
             s = ScraperStats()
+            skip_urls = known.get(entry.source, set()) if incremental else None
             try:
-                for ndoc in entry.fn():
+                for ndoc in entry.fn(skip_urls=skip_urls):
                     try:
                         with db.begin_nested():
                             _, outcome = ingest_normalized_document(db, ndoc)

@@ -61,11 +61,13 @@ def parse_subject_html(html: bytes | str) -> tuple[str, str]:
     return title, element_to_text(body_el)
 
 
-def scrape_subjects() -> Iterator[NormalizedDocument]:
+def scrape_subjects(skip_urls: set[str] | None = None) -> Iterator[NormalizedDocument]:
     urls = _subject_urls_from_courses()
 
     with make_client() as client:
         for url in urls:
+            if skip_urls is not None and url in skip_urls:
+                continue
             try:
                 response = get(client, url)
             except httpx.HTTPError:

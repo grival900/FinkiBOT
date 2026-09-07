@@ -52,7 +52,7 @@ def parse_staff_entry(entry: dict) -> tuple[str, str, dict]:
     return name, "\n".join(lines), metadata
 
 
-def scrape_staff() -> Iterator[NormalizedDocument]:
+def scrape_staff(skip_urls: set[str] | None = None) -> Iterator[NormalizedDocument]:
     with make_client() as client:
         response = client.get(STAFF_JSON_URL)
         response.raise_for_status()
@@ -69,6 +69,8 @@ def scrape_staff() -> Iterator[NormalizedDocument]:
         url = metadata.get("profile", "")
         if not url:
             url = f"https://finki.ukim.mk/staff/{name.lower().replace(' ', '-')}"
+        if skip_urls is not None and url in skip_urls:
+            continue
 
         yield NormalizedDocument(
             source="finki_hub",

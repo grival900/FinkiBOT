@@ -10,6 +10,6 @@ from collections.abc import Iterator
 from backend.scrapers.normalize import NormalizedDocument
 
 
-def scrape_thesis_archive() -> Iterator[NormalizedDocument]:
+def scrape_thesis_archive(skip_urls: set[str] | None = None) -> Iterator[NormalizedDocument]:
     raise NotImplementedError("thesis_archive scraper not yet implemented — see module docstring")
     yield  # pragma: no cover
