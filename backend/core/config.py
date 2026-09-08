@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     def _empty_str_to_none(cls, value: object) -> object:
         return None if value == "" else value
 
-    frontend_origin: str = "http://localhost:5173"
+    frontend_origin: str = "http://localhost:8080"
 
     enable_scheduler: bool = True
     scheduler_interval_minutes: int = 60

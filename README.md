@@ -101,7 +101,7 @@ Then open:
 
 | What | URL |
 |---|---|
-| The app | http://localhost:5173 |
+| The app | http://localhost:8080 |
 | API reference (auto-generated) | http://localhost:8000/docs |
 | Mailhog — shows subscription emails (none are really sent) | http://localhost:8025 |
 | Adminer — browse the database by hand | http://localhost:8090 — server `db`, username / password / database all `finkibot` |

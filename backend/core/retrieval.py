@@ -3,7 +3,7 @@ servers call into this module so retrieval logic lives in exactly one place."""
 
 import difflib
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -40,6 +40,20 @@ _TITLE_TOKEN_SIM = 0.82
 # to rerank before trimming back to `k`. Cheap: an HNSW top-30 costs no more than a
 # top-5 in practice.
 _RERANK_POOL = 30
+
+# Additive score bump for a recently-published result, decaying linearly to zero as the
+# document ages toward `_RECENCY_BOOST_HORIZON_DAYS`. Same rationale and magnitude as
+# TITLE_MATCH_BOOST: pure dense retrieval ranks the near-identical announcement text the
+# faculty reposts every year ("подготвителна настава" schedules, enrollment notices,
+# exam-session postings) almost entirely on cosine similarity, which has no way to
+# prefer this week's copy over 2022's. Deliberately small — it reorders near-ties by
+# recency, it does not drag a genuinely less relevant older page above a much better
+# match. A no-op for undated document types (courses, professors, info pages carry no
+# `published_at`). Opt-in via `search(..., recency_boost=True)`: the MCP tools pass it,
+# while `/chat` keeps its own `prefer_current_year` pass and `/search` stays purely
+# relevance-ranked.
+RECENCY_MATCH_BOOST = 0.12
+_RECENCY_BOOST_HORIZON_DAYS = 730
 
 
 @dataclass
@@ -144,6 +158,24 @@ def _apply_title_boost(query: str, results: list[SearchResult]) -> None:
             r.score = min(1.0, r.score + TITLE_MATCH_BOOST)
 
 
+def _apply_recency_boost(results: list[SearchResult], now: datetime) -> None:
+    """Bumps each dated result's score by up to `RECENCY_MATCH_BOOST`, scaled by how
+    much of the `_RECENCY_BOOST_HORIZON_DAYS` window remains before the document counts
+    as stale (full boost the day it's published, nothing once it's past the horizon).
+    Mutates `results` in place; a no-op for results with no `published_at`."""
+    for r in results:
+        if r.published_at is None:
+            continue
+        published = r.published_at
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        age_days = (now - published).total_seconds() / 86400
+        remaining = 1 - age_days / _RECENCY_BOOST_HORIZON_DAYS
+        if remaining <= 0:
+            continue
+        r.score = min(1.0, r.score + RECENCY_MATCH_BOOST * min(remaining, 1.0))
+
+
 def _merge(results_by_chunk: dict[str, SearchResult], results: list[SearchResult]) -> None:
     for result in results:
         key = f"{result.document_id}:{result.chunk_text[:80]}"
@@ -161,6 +193,7 @@ def search(
     date_from: date | None = None,
     date_to: date | None = None,
     min_score: float | None = None,
+    recency_boost: bool = False,
 ) -> list[SearchResult]:
     """Searches a specific source when `source` is given (top `k`, best score first).
 
@@ -169,6 +202,12 @@ def search(
     MCP tools) every top-`k` result comes back regardless of how weak; `/chat` passes
     a floor so the assistant never builds context or a citation list out of chunks
     that merely share a keyword with the question.
+
+    `recency_boost=True` adds a small age-decaying bump to each dated result's score
+    before the per-source top-`k` trim (see `RECENCY_MATCH_BOOST`) so a freshly posted
+    announcement can overtake a near-identical older repost that scored a hair higher on
+    vector similarity alone. The MCP tools pass it; `/chat` relies on its own
+    `prefer_current_year` pass instead and `/search` leaves it off.
 
     Otherwise searches *each* indexed source independently and returns the union —
     not one global cross-source ranking. A single ranking would let whichever
@@ -184,6 +223,7 @@ def search(
     """
     vectors = _query_vectors(query)
     sources = [source] if source is not None else ALL_SOURCES
+    now = datetime.now(timezone.utc)
 
     pool = max(k, _RERANK_POOL)
     results_by_chunk: dict[str, SearchResult] = {}
@@ -196,6 +236,8 @@ def search(
         # of it on another page scored a hair higher on vector similarity alone.
         ranked = list(per_source.values())
         _apply_title_boost(query, ranked)
+        if recency_boost:
+            _apply_recency_boost(ranked, now)
         # Trimmed per source *before* merging into the overall result set — otherwise
         # a source with more transliteration-variant matches could still end up
         # contributing more than k results and re-introduce the crowding-out this

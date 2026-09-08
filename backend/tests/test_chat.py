@@ -11,7 +11,10 @@ from backend.api.routers.chat import (
     select_citation_sources,
     source_label,
 )
+from backend.core.config import get_settings
 from backend.core.retrieval import SearchResult
+
+_FRONTEND_ORIGIN = get_settings().frontend_origin
 
 
 def _result(**overrides) -> SearchResult:
@@ -86,7 +89,7 @@ def test_citation_url_uses_internal_link_for_finki_hub_courses():
     """predmeti.finki-hub.com has no per-course route to cite — a link to it only
     ever lands on the generic listing page, never the specific course."""
     r = _result(source="finki_hub", type="course", document_id="abc-123")
-    assert citation_url(r) == "http://localhost:5173/documents/abc-123"
+    assert citation_url(r) == f"{_FRONTEND_ORIGIN}/documents/abc-123"
 
 
 def test_citation_url_leaves_other_sources_and_types_untouched():
@@ -100,7 +103,7 @@ def test_citation_url_leaves_other_sources_and_types_untouched():
 def test_build_context_embeds_internal_link_for_finki_hub_course():
     results = [_result(source="finki_hub", type="course", document_id="abc-123", title="Бази на податоци")]
     context = build_context(results)
-    assert "http://localhost:5173/documents/abc-123" in context
+    assert f"{_FRONTEND_ORIGIN}/documents/abc-123" in context
     assert "predmeti.finki-hub.com" not in context
 
 

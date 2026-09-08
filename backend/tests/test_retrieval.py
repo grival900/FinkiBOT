@@ -1,11 +1,14 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
 from backend.core import retrieval
 from backend.core.retrieval import (
+    _RECENCY_BOOST_HORIZON_DAYS,
     _RERANK_POOL,
+    RECENCY_MATCH_BOOST,
     TITLE_MATCH_BOOST,
     SearchResult,
+    _apply_recency_boost,
     _apply_title_boost,
     _merge,
     _query_vectors,
@@ -209,3 +212,67 @@ def test_title_boost_is_a_noop_for_a_long_topical_query():
     _apply_title_boost("што се учи на предметот бази на податоци и sql", [result])
 
     assert result.score == 0.5
+
+
+def test_recency_boost_gives_a_fresh_result_close_to_the_full_bump():
+    now = datetime(2026, 9, 8, tzinfo=timezone.utc)
+    fresh = _result(document_id="days-old", published_at=now - timedelta(days=3), score=0.55)
+
+    _apply_recency_boost([fresh], now)
+
+    assert fresh.score == 0.55 + RECENCY_MATCH_BOOST * (1 - 3 / _RECENCY_BOOST_HORIZON_DAYS)
+
+
+def test_recency_boost_does_not_touch_a_result_past_the_horizon():
+    now = datetime(2026, 9, 8, tzinfo=timezone.utc)
+    stale = _result(document_id="2022", published_at=now - timedelta(days=_RECENCY_BOOST_HORIZON_DAYS + 1), score=0.62)
+
+    _apply_recency_boost([stale], now)
+
+    assert stale.score == 0.62
+
+
+def test_recency_boost_is_a_noop_for_an_undated_result():
+    now = datetime(2026, 9, 8, tzinfo=timezone.utc)
+    course = _result(document_id="course", published_at=None, score=0.7)
+
+    _apply_recency_boost([course], now)
+
+    assert course.score == 0.7
+
+
+def test_recency_boost_handles_a_naive_published_at():
+    now = datetime(2026, 9, 8, tzinfo=timezone.utc)
+    naive = _result(document_id="naive", published_at=datetime(2026, 9, 1), score=0.5)
+
+    _apply_recency_boost([naive], now)
+
+    assert naive.score > 0.5
+
+
+def _run_official_search(rows: list[SearchResult], **kwargs) -> list[SearchResult]:
+    def fake_search_by_vector(db, vector, k, source, type, date_from=None, date_to=None):
+        return list(rows) if source == "official" else []
+
+    with (
+        patch.object(retrieval, "_query_vectors", return_value=[[0.1, 0.2]]),
+        patch.object(retrieval, "_search_by_vector", side_effect=fake_search_by_vector),
+    ):
+        return search(db=None, query="подготвителна настава", source="official", **kwargs)
+
+
+def test_recency_boost_lets_a_fresh_repost_overtake_an_older_near_duplicate():
+    """The motivating case: 'подготвителна настава' matches the schedule announcement
+    the faculty reposts every year, and the 2022 copy scored a hair higher on vector
+    similarity than the one posted days ago."""
+    now = datetime.now(timezone.utc)
+    rows = [
+        _result(document_id="2022", source="official", published_at=now - timedelta(days=1400), score=0.66),
+        _result(document_id="2026", source="official", published_at=now - timedelta(days=4), score=0.61),
+    ]
+
+    plain = _run_official_search(rows, k=2)
+    assert [r.document_id for r in plain] == ["2022", "2026"]
+
+    boosted = _run_official_search(rows, k=2, recency_boost=True)
+    assert [r.document_id for r in boosted] == ["2026", "2022"]
