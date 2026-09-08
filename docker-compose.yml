@@ -31,7 +31,12 @@ services:
     depends_on:
       - db
 
+  # The app itself (backend + frontend) is only started with `--profile full`. Normal
+  # dev runs these two on the host (uvicorn / npm run dev) for fast reloads; a bare
+  # `docker compose up` then brings up just the infra they need (db, mailhog, adminer).
+  # See the README's "Running it" section.
   backend:
+    profiles: ["full"]
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -52,13 +57,14 @@ services:
       - hf_cache:/root/.cache/huggingface
 
   frontend:
+    profiles: ["full"]
     build:
       context: ./frontend
     restart: unless-stopped
     environment:
       VITE_API_BASE_URL: http://localhost:8000
     ports:
-      - "5173:5173"
+      - "8080:8080"
     depends_on:
       - backend
     volumes:

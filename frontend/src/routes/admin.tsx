@@ -93,6 +93,7 @@ function ReindexSection() {
   const { t } = useI18n();
   const [status, setStatus] = useState<ReindexStatus | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
+  const [incremental, setIncremental] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = useCallback(() => {
@@ -140,6 +141,7 @@ function ReindexSection() {
     setStatus({
       state: "running",
       cadence,
+      incremental,
       started_at: null,
       finished_at: null,
       duration_seconds: null,
@@ -152,7 +154,10 @@ function ReindexSection() {
       error: null,
     });
     try {
-      const qs = cadence === "full" ? "" : `?cadence=${cadence}`;
+      const params = new URLSearchParams();
+      if (cadence !== "full") params.set("cadence", cadence);
+      if (incremental) params.set("incremental", "true");
+      const qs = params.toString() ? `?${params}` : "";
       await apiPost(`/admin/reindex${qs}`, {});
     } catch (err) {
       // 409 just means a run is already going — polling will pick it up. Anything else
@@ -195,6 +200,16 @@ function ReindexSection() {
           </button>
         ))}
       </div>
+
+      <label className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={incremental}
+          disabled={running}
+          onChange={(e) => setIncremental(e.target.checked)}
+        />
+        {t("reindex_incremental")}
+      </label>
 
       {running ? (
         <div className="mt-4">
@@ -254,9 +269,9 @@ function ReindexResult({ status }: { status: ReindexStatus }) {
     <Notice kind="info">
       <span className="font-medium">
         {t("reindex_done_in")} {fmtDuration(status.duration_seconds)}
-      </span>{" "}
-      · {totalSeen} {t("reindex_seen")}, {totalNew} {t("reindex_new")}, {totalUpdated}{" "}
-      {t("reindex_updated")}
+      </span>
+      {status.incremental ? ` · ${t("reindex_incremental_tag")}` : ""} · {totalSeen}{" "}
+      {t("reindex_seen")}, {totalNew} {t("reindex_new")}, {totalUpdated} {t("reindex_updated")}
       {status.seed_refreshed ? (
         <>
           {" "}

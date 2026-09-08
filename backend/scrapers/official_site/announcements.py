@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 
 LISTING_PATH = "/announcements/"
 MAX_PAGES = 200  # safety cap; the pager stops earlier once a page has zero rows
+# On an incremental run the board is newest-first, so a run of already-indexed URLs
+# means we've passed the new ones — stop paging rather than walk the whole history.
+# A small buffer (not "stop at the first known one") tolerates the odd back-dated post.
+INCREMENTAL_STOP_AFTER_KNOWN = 10
 
 
 def parse_listing_html(html: bytes | str) -> list[tuple[str, str, str | None]]:
@@ -77,18 +81,29 @@ def _fetch_detail(client: httpx.Client, url: str) -> str:
     return parse_detail_html(response.content)
 
 
-def scrape_announcements() -> Iterator[NormalizedDocument]:
+def scrape_announcements(skip_urls: set[str] | None = None) -> Iterator[NormalizedDocument]:
     """The listing is sorted newest-first, so `scrape_announcement_limit` (if set) caps
     this to the N most recent announcements — the ones actually relevant to students —
     rather than backfilling the entire historical board on every run. Admin-editable
-    (site_settings) — the env value is only the fallback default."""
+    (site_settings) — the env value is only the fallback default.
+
+    `skip_urls` (incremental run): don't re-fetch announcements already indexed, and
+    stop paging once `INCREMENTAL_STOP_AFTER_KNOWN` known ones have gone by in a row."""
     limit = get_setting_cached("scrape_announcement_limit", get_settings().scrape_announcement_limit, parse_int_or_none)
     yielded = 0
+    consecutive_known = 0
 
     with make_client() as client:
         for title, detail_url, date_text in _iter_listing_rows(client):
             if limit is not None and yielded >= limit:
                 break
+
+            if skip_urls is not None and detail_url in skip_urls:
+                consecutive_known += 1
+                if consecutive_known >= INCREMENTAL_STOP_AFTER_KNOWN:
+                    break
+                continue
+            consecutive_known = 0
 
             try:
                 content = _fetch_detail(client, detail_url)

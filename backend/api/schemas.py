@@ -155,6 +155,7 @@ class ScraperStatOut(BaseModel):
 class ReindexStatusOut(BaseModel):
     state: Literal["idle", "running", "done", "error"]
     cadence: str | None = None
+    incremental: bool = False
     started_at: datetime | None = None
     finished_at: datetime | None = None
     duration_seconds: float | None = None

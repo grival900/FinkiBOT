@@ -187,6 +187,7 @@ export type ScraperStat = {
 export type ReindexStatus = {
   state: "idle" | "running" | "done" | "error";
   cadence: string | null;
+  incremental: boolean;
   started_at: string | null;
   finished_at: string | null;
   duration_seconds: number | null;

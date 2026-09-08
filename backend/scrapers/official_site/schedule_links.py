@@ -55,11 +55,13 @@ def parse_schedule_links_html(html: bytes | str) -> list[tuple[str, str]]:
     return results
 
 
-def scrape_schedule_links() -> Iterator[NormalizedDocument]:
+def scrape_schedule_links(skip_urls: set[str] | None = None) -> Iterator[NormalizedDocument]:
     with make_client() as client:
         response = get(client, f"{BASE_URL}{LISTING_PATH}")
 
     for title, url in parse_schedule_links_html(response.content):
+        if skip_urls is not None and url in skip_urls:
+            continue
         yield NormalizedDocument(
             source="official",
             type="schedule",

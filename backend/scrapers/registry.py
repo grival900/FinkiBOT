@@ -30,7 +30,10 @@ Cadence = Literal["frequent", "slow"]
 class ScraperEntry:
     name: str
     source: str
-    fn: Callable[[], Iterator[NormalizedDocument]]
+    # Called as `fn(skip_urls=...)` by the ingestion pipeline. `skip_urls` is None on a
+    # full run, or a set of already-indexed URLs on an incremental run — the scraper
+    # then skips re-fetching (or re-yielding) those.
+    fn: Callable[..., Iterator[NormalizedDocument]]
     enabled: bool = True
     # "frequent": cheap (a handful of requests, mostly single JSON fetches) and/or
     #   time-sensitive (announcements, exam sessions) — safe to run every scheduler tick.

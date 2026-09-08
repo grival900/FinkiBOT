@@ -1,8 +1,9 @@
 """Shared vector-search layer. Both the FastAPI `/search`+`/chat` routes and the MCP
 servers call into this module so retrieval logic lives in exactly one place."""
 
+import difflib
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -17,6 +18,42 @@ from backend.models import Chunk, Document
 # happens to be indexed yet, and it's exactly the pair the frontend's source filter
 # and the two MCP servers already hardcode.
 ALL_SOURCES = ["official", "finki_hub"]
+
+# Score added to a result whose document *title* contains every token of a short,
+# specific query. Pure dense retrieval ranks a chunk that merely mentions a name or
+# course code (a co-author line on a different professor's publications page, a
+# prerequisite reference on another course) about as high as the page actually about
+# it; this nudge lets the on-topic page win without a full keyword index. Deliberately
+# small — it reorders near-ties, it doesn't drag an off-topic chunk to the top.
+TITLE_MATCH_BOOST = 0.12
+# Only queries with at most this many whitespace tokens get the boost — a long topical
+# query ("што покрива предметот бази на податоци и sql") would match half the course
+# catalogue's titles and the boost would be noise rather than signal.
+_MAX_BOOST_QUERY_TOKENS = 5
+# Fuzzy per-token match threshold, to absorb the transliteration slack the Latin->
+# Cyrillic map openly makes ("kalajdziski" lands as "калајѕиски"; the real surname is
+# "калајџиски" — SequenceMatcher ratio ~0.9, a substring check alone would miss it).
+_TITLE_TOKEN_SIM = 0.82
+# The title boost can only reorder results the vector search already returned. A small
+# caller `k` (the MCP tools ask for 3-5) would hand it a list the on-topic page never
+# made it into — so each per-source vector search pulls at least this many candidates
+# to rerank before trimming back to `k`. Cheap: an HNSW top-30 costs no more than a
+# top-5 in practice.
+_RERANK_POOL = 30
+
+# Additive score bump for a recently-published result, decaying linearly to zero as the
+# document ages toward `_RECENCY_BOOST_HORIZON_DAYS`. Same rationale and magnitude as
+# TITLE_MATCH_BOOST: pure dense retrieval ranks the near-identical announcement text the
+# faculty reposts every year ("подготвителна настава" schedules, enrollment notices,
+# exam-session postings) almost entirely on cosine similarity, which has no way to
+# prefer this week's copy over 2022's. Deliberately small — it reorders near-ties by
+# recency, it does not drag a genuinely less relevant older page above a much better
+# match. A no-op for undated document types (courses, professors, info pages carry no
+# `published_at`). Opt-in via `search(..., recency_boost=True)`: the MCP tools pass it,
+# while `/chat` keeps its own `prefer_current_year` pass and `/search` stays purely
+# relevance-ranked.
+RECENCY_MATCH_BOOST = 0.12
+_RECENCY_BOOST_HORIZON_DAYS = 730
 
 
 @dataclass
@@ -91,6 +128,54 @@ def _search_by_vector(
     ]
 
 
+def _title_query_variants(query: str) -> list[list[str]]:
+    """Tokenised query forms to test against result titles: the query as typed, plus a
+    Cyrillic transliteration when it's Latin-only (indexed titles are Cyrillic). Only
+    variants short enough to be a name/code lookup rather than a topical sentence."""
+    variants = [query.lower().split()]
+    if is_latin_only(query):
+        variants.append(transliterate_latin_to_cyrillic(query).split())
+    return [v for v in variants if 1 <= len(v) <= _MAX_BOOST_QUERY_TOKENS]
+
+
+def _token_in_title(token: str, title_tokens: list[str]) -> bool:
+    return any(
+        token in tt or difflib.SequenceMatcher(None, token, tt).ratio() >= _TITLE_TOKEN_SIM
+        for tt in title_tokens
+    )
+
+
+def _apply_title_boost(query: str, results: list[SearchResult]) -> None:
+    """Bumps the score of every result whose title contains all tokens of a short
+    query variant (see `_title_query_variants`). Mutates `results` in place; a no-op
+    for long/topical queries and for results with no title-level match."""
+    variants = _title_query_variants(query)
+    if not variants:
+        return
+    for r in results:
+        title_tokens = r.title.lower().split()
+        if any(all(_token_in_title(t, title_tokens) for t in variant) for variant in variants):
+            r.score = min(1.0, r.score + TITLE_MATCH_BOOST)
+
+
+def _apply_recency_boost(results: list[SearchResult], now: datetime) -> None:
+    """Bumps each dated result's score by up to `RECENCY_MATCH_BOOST`, scaled by how
+    much of the `_RECENCY_BOOST_HORIZON_DAYS` window remains before the document counts
+    as stale (full boost the day it's published, nothing once it's past the horizon).
+    Mutates `results` in place; a no-op for results with no `published_at`."""
+    for r in results:
+        if r.published_at is None:
+            continue
+        published = r.published_at
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        age_days = (now - published).total_seconds() / 86400
+        remaining = 1 - age_days / _RECENCY_BOOST_HORIZON_DAYS
+        if remaining <= 0:
+            continue
+        r.score = min(1.0, r.score + RECENCY_MATCH_BOOST * min(remaining, 1.0))
+
+
 def _merge(results_by_chunk: dict[str, SearchResult], results: list[SearchResult]) -> None:
     for result in results:
         key = f"{result.document_id}:{result.chunk_text[:80]}"
@@ -107,8 +192,22 @@ def search(
     type: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    min_score: float | None = None,
+    recency_boost: bool = False,
 ) -> list[SearchResult]:
     """Searches a specific source when `source` is given (top `k`, best score first).
+
+    `min_score`, when set, drops every result below that cosine similarity from the
+    return value — the caller's relevance floor. Left `None` (the `/search` box, the
+    MCP tools) every top-`k` result comes back regardless of how weak; `/chat` passes
+    a floor so the assistant never builds context or a citation list out of chunks
+    that merely share a keyword with the question.
+
+    `recency_boost=True` adds a small age-decaying bump to each dated result's score
+    before the per-source top-`k` trim (see `RECENCY_MATCH_BOOST`) so a freshly posted
+    announcement can overtake a near-identical older repost that scored a hair higher on
+    vector similarity alone. The MCP tools pass it; `/chat` relies on its own
+    `prefer_current_year` pass instead and `/search` leaves it off.
 
     Otherwise searches *each* indexed source independently and returns the union —
     not one global cross-source ranking. A single ranking would let whichever
@@ -124,17 +223,29 @@ def search(
     """
     vectors = _query_vectors(query)
     sources = [source] if source is not None else ALL_SOURCES
+    now = datetime.now(timezone.utc)
 
+    pool = max(k, _RERANK_POOL)
     results_by_chunk: dict[str, SearchResult] = {}
     for src in sources:
         per_source: dict[str, SearchResult] = {}
         for vector in vectors:
-            _merge(per_source, _search_by_vector(db, vector, k, src, type, date_from, date_to))
+            _merge(per_source, _search_by_vector(db, vector, pool, src, type, date_from, date_to))
+        # Title-relevance nudge applied *before* the per-source top-k trim, so a page
+        # actually about the query can climb into the k results even if a mere mention
+        # of it on another page scored a hair higher on vector similarity alone.
+        ranked = list(per_source.values())
+        _apply_title_boost(query, ranked)
+        if recency_boost:
+            _apply_recency_boost(ranked, now)
         # Trimmed per source *before* merging into the overall result set — otherwise
         # a source with more transliteration-variant matches could still end up
         # contributing more than k results and re-introduce the crowding-out this
         # function exists to avoid.
-        top_k = sorted(per_source.values(), key=lambda r: r.score, reverse=True)[:k]
+        top_k = sorted(ranked, key=lambda r: r.score, reverse=True)[:k]
         _merge(results_by_chunk, top_k)
 
-    return sorted(results_by_chunk.values(), key=lambda r: r.score, reverse=True)
+    ordered = sorted(results_by_chunk.values(), key=lambda r: r.score, reverse=True)
+    if min_score is not None:
+        ordered = [r for r in ordered if r.score >= min_score]
+    return ordered

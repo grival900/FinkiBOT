@@ -19,6 +19,9 @@ def result_to_dict(r: SearchResult) -> dict:
 
 
 def run_search(query: str, k: int, source: str, type: str | None = None) -> list[dict]:
+    # recency_boost: a caller reaching for these tools ("what's the latest on X")
+    # almost always wants the current posting of a recurring announcement, not
+    # whichever year's copy happens to score highest on vector similarity.
     with SessionLocal() as db:
-        results = search(db, query, k=k, source=source, type=type)
+        results = search(db, query, k=k, source=source, type=type, recency_boost=True)
     return [result_to_dict(r) for r in results]

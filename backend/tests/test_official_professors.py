@@ -71,3 +71,28 @@ def test_scrape_professors_skips_only_truly_empty_profiles():
     assert docs[0].type == "professor"
     assert docs[0].metadata == {"email": "full@finki.ukim.mk"}
     assert docs[1].metadata == {"email": "contact@finki.ukim.mk"}
+
+
+def test_scrape_professors_incremental_does_not_fetch_known_profiles():
+    fake_urls = [
+        "https://finki.ukim.mk/kadar/new/",
+        "https://finki.ukim.mk/kadar/known/",
+    ]
+
+    with (
+        patch.object(professors, "make_client"),
+        patch.object(professors, "get") as mock_get,
+        patch.object(professors, "parse_listing_html", return_value=fake_urls),
+        patch.object(
+            professors,
+            "parse_professor_html",
+            return_value=("Нов Профил", "Богата биографија. " * 10, "new@finki.ukim.mk"),
+        ),
+    ):
+        mock_get.return_value.content = b""
+        mock_get.return_value.url.path = "/kadar/new/"
+        docs = list(scrape_professors(skip_urls={"https://finki.ukim.mk/kadar/known/"}))
+
+    assert [d.url for d in docs] == ["https://finki.ukim.mk/kadar/new/"]
+    # listing fetch + the one new profile — the known profile was never requested
+    assert mock_get.call_count == 2

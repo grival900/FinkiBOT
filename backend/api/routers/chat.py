@@ -1,5 +1,7 @@
+import re
 from collections.abc import Iterator
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -10,6 +12,7 @@ from backend.api.schemas import ChatRequest
 from backend.core.config import get_settings
 from backend.core.llm import get_client
 from backend.core.retrieval import SearchResult, search
+from backend.core.site_settings import get_float_setting
 from backend.db import get_db
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -21,6 +24,15 @@ settings = get_settings()
 # hit alongside the older ones semantic search alone would rank just as high.
 CANDIDATE_POOL_K = 24
 CHAT_RESULT_K = 6
+
+# Citation list is deliberately tighter than the context the model gets. A retrieved
+# chunk can be worth handing the model as background yet not worth naming as a source:
+# the long tail of the pool is usually an incidental keyword overlap, and listing it
+# under "Извори" just makes a correct answer look like it came from the wrong page.
+MAX_CITED_SOURCES = 4
+# A document whose best chunk scores more than this below the top hit is dropped from
+# the citation list (not the context) — see `select_citation_sources`.
+CITATION_SCORE_GAP = 0.15
 
 SYSTEM_PROMPT = (
     "You are FinkiBOT, an assistant for students at FINKI (Faculty of Computer Science "
@@ -110,6 +122,40 @@ def citation_url(result: SearchResult) -> str:
     return result.url
 
 
+# Appended to each citation's title so entries for the same subject from different
+# sites are visibly distinct — before this, the finki-hub and official pages for one
+# course both rendered as the bare title "Неструктурирани бази на податоци", looking
+# like one link repeated.
+_TYPE_LABEL = {
+    "course": "предмет",
+    "professor": "професор",
+    "staff": "наставник",
+    "announcement": "објава",
+    "material": "материјали",
+    "schedule": "распоред",
+    "page": "страница",
+}
+_FRONTEND_HOST = urlparse(settings.frontend_origin).netloc.removeprefix("www.")
+
+
+def _display_host(url: str) -> str:
+    """Human-facing site name for a citation link — normalised so every finki-hub
+    subdomain (predmeti./snimki./assets.) reads as one site, and our own internal
+    document page (only used for finki_hub courses) is attributed to finki-hub too."""
+    host = urlparse(url).netloc.removeprefix("www.")
+    if host == _FRONTEND_HOST or host.endswith("finki-hub.com"):
+        return "finki-hub.com"
+    if host.endswith("finki.ukim.mk"):
+        return "finki.ukim.mk"
+    return host or "врска"
+
+
+def source_label(result: SearchResult) -> str:
+    """Citation display text: title + what it is + which site the link opens."""
+    kind = _TYPE_LABEL.get(result.type, result.type)
+    return f"{result.title} ({kind}, {_display_host(citation_url(result))})"
+
+
 def build_context(results: list[SearchResult]) -> str:
     if not results:
         return "(no matching context found)"
@@ -120,20 +166,70 @@ def build_context(results: list[SearchResult]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
+def select_citation_sources(
+    results: list[SearchResult],
+    max_sources: int = MAX_CITED_SOURCES,
+    score_gap: float = CITATION_SCORE_GAP,
+) -> list[SearchResult]:
+    """Which retrieved documents to actually list under "Извори". `results` is already
+    sorted best-first. Keeps one entry per document (and per resolved link — the
+    finki-hub and official copies of a course can point at the same syllabus URL),
+    stops at the first document whose score falls more than `score_gap` below the top
+    hit (the point where matches stop being what the answer is built on and start
+    being passing keyword mentions), and caps the count. Returns `[]` for an empty
+    input — the caller then omits the block entirely rather than printing an empty
+    heading."""
+    if not results:
+        return []
+    top_score = results[0].score
+    seen_docs: set[str] = set()
+    seen_urls: set[str] = set()
+    picked: list[SearchResult] = []
+    for r in results:
+        if top_score - r.score > score_gap:
+            break
+        url = citation_url(r)
+        if r.document_id in seen_docs or url in seen_urls:
+            continue
+        seen_docs.add(r.document_id)
+        seen_urls.add(url)
+        picked.append(r)
+        if len(picked) >= max_sources:
+            break
+    return picked
+
+
 def build_sources_block(results: list[SearchResult]) -> str:
     """Built here instead of left to the LLM: guarantees every link is well-formed and
-    points at the right place (see `citation_url`), and keeps identical questions from
-    getting a differently-formatted source list each time."""
-    seen: set[str] = set()
-    lines: list[str] = []
-    for r in results:
-        if r.document_id in seen:
-            continue
-        seen.add(r.document_id)
-        lines.append(f"- [{r.title}]({citation_url(r)})")
-    if not lines:
+    points at the right place (see `citation_url`), that each entry says which site it
+    came from (see `source_label`), and that identical questions get an identically
+    formatted list. `results` is expected to be pre-filtered by
+    `select_citation_sources`."""
+    if not results:
         return ""
+    lines = [f"- [{source_label(r)}]({citation_url(r)})" for r in results]
     return "\n\n---\n\n**Извори:**\n" + "\n".join(lines)
+
+
+# The model is told (system prompt) not to write its own source list, but sometimes
+# does anyway — always at the very end, as a near-bare heading like "Извори:" or
+# "**Sources**", optionally after a --- rule. We cut from there on and append our own
+# canonical block instead, so the answer never shows two overlapping lists.
+_SOURCES_HEADING_RE = re.compile(
+    r"\n\s*(?:[-*_]{3,}\s*)?"  # optional horizontal rule (and any blank lines around it)
+    r"(?:\*{1,2}|__|#{1,6}[ \t]*)?"  # optional bold / ATX-heading markup
+    r"(?:извори|sources|референци|references)"
+    r"[ \t]*:?[ \t]*(?:\*{1,2}|__)?[ \t]*\n",  # optional colon / closing markup, then EOL
+    re.IGNORECASE,
+)
+# How many trailing characters to hold back while streaming, so a source heading that
+# has only partly arrived isn't emitted before we can recognise and cut it.
+_HEADING_LOOKBACK = 64
+
+
+def _sources_cut_index(text: str) -> int | None:
+    m = _SOURCES_HEADING_RE.search(text)
+    return m.start() if m else None
 
 
 def _gemini_role(role: str) -> str:
@@ -143,10 +239,12 @@ def _gemini_role(role: str) -> str:
 
 @router.post("")
 def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingResponse:
-    candidates = search(db, payload.message, k=CANDIDATE_POOL_K)
+    min_score = get_float_setting(db, "chat_min_score", settings.chat_min_score)
+    candidates = search(db, payload.message, k=CANDIDATE_POOL_K, min_score=min_score)
     current_year = datetime.now(timezone.utc).year
     results = prefer_current_year(candidates, k=CHAT_RESULT_K, current_year=current_year)
     context = build_context(results)
+    cited = select_citation_sources(results)
 
     contents = [
         types.Content(role=_gemini_role(m.role), parts=[types.Part.from_text(text=m.content)])
@@ -176,9 +274,27 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingRespon
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
+        acc = ""
+        sent = 0
         for chunk in stream:
-            if chunk.text:
-                yield chunk.text
-        yield build_sources_block(results)
+            if not chunk.text:
+                continue
+            acc += chunk.text
+            cut = _sources_cut_index(acc)
+            if cut is not None:
+                if cut > sent:
+                    yield acc[sent:cut]
+                sent = len(acc)
+                for _ in stream:  # drain the rest, discard the model's own list
+                    pass
+                break
+            safe = len(acc) - _HEADING_LOOKBACK
+            if safe > sent:
+                yield acc[sent:safe]
+                sent = safe
+        if sent < len(acc):
+            cut = _sources_cut_index(acc)
+            yield acc[sent : cut if cut is not None else len(acc)].rstrip()
+        yield build_sources_block(cited)
 
     return StreamingResponse(event_stream(), media_type="text/plain")

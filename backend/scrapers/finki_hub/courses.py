@@ -123,7 +123,7 @@ def _format_content(name: str, tags: list[str], details: dict) -> str:
     return "\n".join(lines)
 
 
-def scrape_courses() -> Iterator[NormalizedDocument]:
+def scrape_courses(skip_urls: set[str] | None = None) -> Iterator[NormalizedDocument]:
     with make_client() as client:
         response = client.get(COURSES_JSON_URL)
         response.raise_for_status()
@@ -151,6 +151,8 @@ def scrape_courses() -> Iterator[NormalizedDocument]:
             metadata["official_subject_url"] = official_url
 
         url = f"{PREDMETI_URL}/?course={quote(name)}"
+        if skip_urls is not None and url in skip_urls:
+            continue
 
         yield NormalizedDocument(
             source="finki_hub",

@@ -60,3 +60,27 @@ def test_scrape_announcements_unlimited_by_default():
         docs = list(scrape_announcements())
 
     assert len(docs) == 5
+
+
+def test_scrape_announcements_incremental_skips_known_and_stops_after_a_run_of_them():
+    """New items sit at the top (newest-first). Incremental mode fetches the leading new
+    ones, then bails once INCREMENTAL_STOP_AFTER_KNOWN known ones have gone by in a row
+    — it does not walk the rest of the board."""
+    total = announcements.INCREMENTAL_STOP_AFTER_KNOWN + 20
+    fake_rows = [
+        (f"Title {i}", f"https://finki.ukim.mk/announcements/item-{i}/", "2026-01-01T00:00:00+01:00")
+        for i in range(total)
+    ]
+    # first two are new, everything after is already indexed
+    known = {url for _, url, _ in fake_rows[2:]}
+
+    with (
+        patch.object(announcements, "_iter_listing_rows", return_value=iter(fake_rows)),
+        patch.object(announcements, "_fetch_detail", return_value="body text") as fetch_detail,
+        patch.object(announcements, "make_client"),
+        patch.object(announcements, "get_setting_cached", return_value=None),
+    ):
+        docs = list(scrape_announcements(skip_urls=known))
+
+    assert [d.title for d in docs] == ["Title 0", "Title 1"]
+    assert fetch_detail.call_count == 2  # never fetched a known URL
