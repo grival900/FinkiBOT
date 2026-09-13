@@ -25,3 +25,17 @@ def run_search(query: str, k: int, source: str, type: str | None = None) -> list
     with SessionLocal() as db:
         results = search(db, query, k=k, source=source, type=type, recency_boost=True)
     return [result_to_dict(r) for r in results]
+
+
+def run_search_types(query: str, k: int, source: str, types: list[str]) -> list[dict]:
+    """Like `run_search`, but merges results across several `Document.type` values —
+    for exam-session lookups, where the same query should surface both `type=exam`
+    (an actual parsed row, if we managed to download/parse that file) and `type=schedule`
+    (the link-only fallback for whatever we couldn't parse) ranked together by score,
+    rather than the caller having to know which type any given file ended up as."""
+    with SessionLocal() as db:
+        merged = [
+            r for t in types for r in search(db, query, k=k, source=source, type=t, recency_boost=True)
+        ]
+    merged.sort(key=lambda r: r.score, reverse=True)
+    return [result_to_dict(r) for r in merged[:k]]

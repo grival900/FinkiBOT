@@ -21,9 +21,13 @@ settings = get_settings()
 # How many candidates to pull from vector search before recency-filtering down to
 # CHAT_RESULT_K — needs to be wide enough that a query matching a yearly-recurring
 # announcement (e.g. "студентска служба") has a real chance of surfacing a current-year
-# hit alongside the older ones semantic search alone would rank just as high.
-CANDIDATE_POOL_K = 24
-CHAT_RESULT_K = 6
+# hit alongside the older ones semantic search alone would rank just as high. Widened
+# once type=exam documents were introduced: one exam-session spreadsheet now produces
+# many small near-identical per-row documents (same course text repeated per room/time),
+# which can otherwise crowd out an equally relevant document from a different year or
+# source at these tighter limits.
+CANDIDATE_POOL_K = 40
+CHAT_RESULT_K = 10
 
 # Citation list is deliberately tighter than the context the model gets. A retrieved
 # chunk can be worth handing the model as background yet not worth naming as a source:
@@ -60,6 +64,58 @@ SYSTEM_PROMPT = (
     "schedule entry is titled 'јунска испитна сесија'), say you don't have the exact dates "
     "but mention that specific entry — don't substitute a less relevant schedule entry just "
     "because it's also present in the context.\n\n"
+    "Other context entries have type=exam: these ARE one real row extracted from an exam-"
+    "session/consultation spreadsheet (course, date, time, room, professor — whatever "
+    "columns that particular file has, labelled exactly as the file labels them), not just "
+    "a link. When a type=exam entry answers the student's question, state the concrete "
+    "facts from it directly (e.g. the actual date/time/room) instead of only pointing at "
+    "the file — that's exactly what these entries are for. A grid-shaped schedule file "
+    "(rooms as columns, half-hour time slots as rows) produces several type=exam entries "
+    "for the exact same course+room that only differ by a slightly later start time — "
+    "these are consecutive slots of one continuous exam block, not separate exam sittings. "
+    "When you see several type=exam entries for the same course and room, report only the "
+    "single earliest start time among them (when the exam block begins), not every slot — "
+    "never list out multiple times for what is really one continuous block in one room. "
+    "Only mention more than one time for the same course if the rooms are genuinely "
+    "different, since that means separate groups of students sit the exam separately. Only fall back to 'проверете во "
+    "документот' if no type=exam entry in the context actually covers what they asked.\n\n"
+    "A single time slot in a grid-shaped schedule file can have different rooms running "
+    "different courses side by side — including one whose column literally reads an English "
+    "name (e.g. 'Databases') for the very course the student asked about in Macedonian ('Бази "
+    "на податоци'); that's the same course, not a different one, so include it. But when a "
+    "room's course text clearly names a genuinely different subject than what the student "
+    "asked about, don't include that room just because it shares the same time slot — only "
+    "report rooms whose course field actually matches (allowing for an equivalent English/"
+    "Macedonian name) the specific course the student asked about.\n\n"
+        "Course names at FINKI overlap heavily as substrings — 'Бази на податоци', "
+    "'Неструктурирани бази на податоци', 'Дистрибуирани бази на податоци', 'Напредни бази на "
+    "податоци' are four different courses that all contain the words 'бази на податоци'. "
+    "When the student names a specific course, only use a type=exam/type=course/type=material "
+    "row whose course field is an EXACT match to that course name (or an exact equivalent "
+    "translation) — never one that merely contains the asked-about words as part of a longer, "
+    "more specific course title, and never one that's missing a qualifier word the student's "
+    "course name has. If nothing in the context is an exact match, say so rather than "
+    "substituting the closest-sounding longer/shorter course name.\n\n"
+    "This is a hard filtering rule, not a suggestion: when answering about one named course, "
+    "silently discard every context entry whose own course field is a DIFFERENT course, even "
+    "one that shares words, sits in the same file, or occupies the same exam time slot — treat "
+    "a discarded entry exactly as if it were never in the context at all. Never mention it, "
+    "never list its room 'for completeness', never add a parenthetical note about it. For "
+    "example, if asked about 'Бази на податоци' and the context also contains rows for "
+    "'Неструктурирани бази на податоци' and 'Веб базирани системи' at the very same date/time, "
+    "the answer must describe ONLY the 'Бази на податоци' rows — say nothing whatsoever about "
+    "the other two courses, not even a footnote. The answer should read exactly like an answer "
+    "from a normal single-purpose lookup tool that was only ever given data for the one course "
+    "asked about.\n\n"
+    "The context can contain type=exam/type=schedule entries from two different sources for "
+    "the same kind of exam-session data: 'official' (finki.ukim.mk's own schedule widget, "
+    "which only ever shows the single most recently posted session — it has no history of "
+    "past sessions) and 'finki_hub' (finki-hub.com's own archive, which keeps multiple past "
+    "sessions). If the student asks about a session/year the official source has no entry "
+    "for, don't just say the data isn't available — check whether a finki_hub entry in the "
+    "context covers it instead, and if so answer from that one directly (still citing it "
+    "normally), same as you would for any other source. Only say the information truly isn't "
+    "available if neither source's context entries cover what was asked.\n\n"
     "Don't write a source list or any URLs/links yourself — the app appends an accurate "
     "source list automatically after your answer, from the same context you were given. "
     "Referring to a source by name in prose (e.g. \"according to the official course "
@@ -133,6 +189,7 @@ _TYPE_LABEL = {
     "announcement": "објава",
     "material": "материјали",
     "schedule": "распоред",
+    "exam": "испитен термин",
     "page": "страница",
 }
 _FRONTEND_HOST = urlparse(settings.frontend_origin).netloc.removeprefix("www.")
@@ -259,6 +316,19 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingRespon
 
     client = get_client()
 
+    def _thinking_config() -> types.ThinkingConfig:
+        """Gemini 2.5 controls thinking via a token `thinking_budget` (0 disables it);
+        Gemini 3 models use the newer `thinking_level` instead — `thinking_budget` is
+        documented as backward-compatible there too, but has been observed to trigger a
+        hard 400 INVALID_ARGUMENT against gemini-3.6-flash in practice, so this switches
+        on the model name rather than relying on that compatibility claim. "low" is the
+        closest match to the old thinking_budget=0 intent (minimize the latency/cost this
+        was originally added to cut — see below), since "minimal" isn't available on
+        every Gemini 3 variant."""
+        if settings.llm_model.startswith("gemini-3"):
+            return types.ThinkingConfig(thinking_level="low")
+        return types.ThinkingConfig(thinking_budget=0)
+
     def event_stream() -> Iterator[str]:
         stream = client.models.generate_content_stream(
             model=settings.llm_model,
@@ -267,11 +337,10 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingRespon
                 system_instruction=SYSTEM_PROMPT,
                 max_output_tokens=4096,
                 temperature=0.2,
-                # gemini-2.5-flash runs an extended "thinking" pass by default — measured
-                # ~3s added to time-to-first-token for zero benefit on this task (grounded
-                # RAG lookup + rephrasing, not multi-step reasoning). Disabling it cut
-                # first-token latency from ~4.4s to ~1s in testing.
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                # A full "high" thinking pass measured ~3s added to time-to-first-token
+                # for zero benefit on this task (grounded RAG lookup + rephrasing, not
+                # multi-step reasoning) — cut first-token latency from ~4.4s to ~1s.
+                thinking_config=_thinking_config(),
             ),
         )
         acc = ""

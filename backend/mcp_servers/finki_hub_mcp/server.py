@@ -7,7 +7,7 @@ Run standalone: `python -m backend.mcp_servers.finki_hub_mcp.server`
 
 from mcp.server.fastmcp import FastMCP
 
-from backend.mcp_servers.common import run_search
+from backend.mcp_servers.common import run_search, run_search_types
 
 mcp = FastMCP("finki-hub")
 
@@ -47,11 +47,14 @@ def search_thesis_archive(query: str, limit: int = 5) -> list[dict]:
 
 @mcp.tool()
 def search_exam_sessions(query: str, limit: int = 5) -> list[dict]:
-    """Search exam session schedules by session name or academic year (e.g. "Јуни 2025",
-    "зимски колоквиум"). Returns download links to the schedule spreadsheets (XLSX/PDF)
-    hosted on assets.finki-hub.com."""
-    return run_search(query, k=limit, source="finki_hub", type="schedule")
+    """Search exam session schedules by session name, academic year, or course name
+    (e.g. "Јуни 2025", "зимски колоквиум", "Бази на податоци"). Where the schedule
+    spreadsheet could be downloaded and parsed, results include the actual row —
+    course, date, time, room, whatever that file's columns are — not just a link;
+    otherwise falls back to a download link to the file on assets.finki-hub.com."""
+    return run_search_types(query, k=limit, source="finki_hub", types=["exam", "schedule"])
 
 
 if __name__ == "__main__":
     mcp.run()
+    

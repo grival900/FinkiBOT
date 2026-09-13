@@ -8,7 +8,7 @@ Run standalone: `python -m backend.mcp_servers.official_mcp.server`
 
 from mcp.server.fastmcp import FastMCP
 
-from backend.mcp_servers.common import run_search
+from backend.mcp_servers.common import run_search, run_search_types
 
 mcp = FastMCP("finki-official")
 
@@ -22,10 +22,12 @@ def search_announcements(query: str, limit: int = 5) -> list[dict]:
 
 @mcp.tool()
 def get_exam_schedule(query: str = "испитна сесија распоред", limit: int = 5) -> list[dict]:
-    """Find exam-session schedule references. Exact dates live in linked SharePoint
-    spreadsheets, not in any page text — this returns the reference link (title + url)
-    pointing to the right schedule file, not the dates themselves."""
-    return run_search(query, k=limit, source="official", type="schedule")
+    """Find exam-session schedule info, e.g. by course name or session ("Јунска
+    испитна сесија"). Where the linked SharePoint spreadsheet could be downloaded and
+    parsed, results include the actual row (course, date, time, room, whatever that
+    file's columns are); otherwise falls back to the reference link (title + url)
+    pointing at the file itself."""
+    return run_search_types(query, k=limit, source="official", types=["exam", "schedule"])
 
 
 @mcp.tool()
@@ -56,3 +58,4 @@ def search_faculty_info(query: str, limit: int = 5) -> list[dict]:
 
 if __name__ == "__main__":
     mcp.run()
+    
