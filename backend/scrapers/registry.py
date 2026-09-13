@@ -17,6 +17,7 @@ from backend.scrapers.finki_hub.staff import scrape_staff
 from backend.scrapers.finki_hub.thesis_archive import scrape_thesis_archive
 from backend.scrapers.normalize import NormalizedDocument
 from backend.scrapers.official_site.announcements import scrape_announcements
+from backend.scrapers.official_site.consultations import scrape_consultations
 from backend.scrapers.official_site.info_pages import scrape_info_pages
 from backend.scrapers.official_site.professors import scrape_professors
 from backend.scrapers.official_site.schedule_links import scrape_schedule_links
@@ -62,6 +63,10 @@ SCRAPERS: list[ScraperEntry] = [
     ScraperEntry(name="finki_hub.recordings", source="finki_hub", fn=scrape_recordings, cadence="slow"),
     ScraperEntry(name="finki_hub.staff", source="finki_hub", fn=scrape_staff, cadence="frequent"),
     ScraperEntry(name="finki_hub.sessions", source="finki_hub", fn=scrape_sessions, cadence="frequent"),
+    # One HTTP request per professor who has a consultations.finki.ukim.mk link (reads
+    # the URL list from finki_hub.staff's own feed) — same one-request-per-item shape
+    # as official.professors, hence "slow".
+    ScraperEntry(name="official.consultations", source="official", fn=scrape_consultations, cadence="slow"),
     ScraperEntry(
         name="finki_hub.thesis_archive", source="finki_hub", fn=scrape_thesis_archive, enabled=False, cadence="slow"
     ),

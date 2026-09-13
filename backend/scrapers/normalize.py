@@ -16,7 +16,7 @@ Source = Literal["official", "finki_hub"]
 # which stays link-only (title + URL, no file contents) for whatever couldn't be
 # downloaded/parsed, so chat.py's system prompt can tell the two apart.
 DocumentType = Literal[
-    "announcement", "course", "professor", "staff", "thesis", "schedule", "material", "exam"
+    "announcement", "course", "professor", "staff", "thesis", "schedule", "material", "exam", "consultation"
 ]
 
 

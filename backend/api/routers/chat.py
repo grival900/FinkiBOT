@@ -116,6 +116,12 @@ SYSTEM_PROMPT = (
     "context covers it instead, and if so answer from that one directly (still citing it "
     "normally), same as you would for any other source. Only say the information truly isn't "
     "available if neither source's context entries cover what was asked.\n\n"
+    "type=consultation entries are a professor's actual upcoming consultation slot(s) — "
+    "date, time, location, and any instructions — scraped directly from the live booking "
+    "system, not just a link to it. When asked when a professor has consultations, state "
+    "the real date/time/location from a type=consultation entry directly. A `staff` entry's "
+    "own 'Консултации' line is only ever a link to that same booking system, never the slot "
+    "data itself — prefer the type=consultation entry when both are present in the context.\n\n"
     "Don't write a source list or any URLs/links yourself — the app appends an accurate "
     "source list automatically after your answer, from the same context you were given. "
     "Referring to a source by name in prose (e.g. \"according to the official course "
@@ -134,6 +140,13 @@ SYSTEM_PROMPT = (
     "then a bullet list of the key facts actually present (title/position, email, cabinet, "
     "consultations), followed by a short paragraph summarizing their bio/publications if "
     "present in the context.\n\n"
+    "Exception: when the question is specifically and only about a professor's consultations "
+    "(e.g. \"кога има консултации проф. X\") rather than about the professor generally, skip "
+    "the header+full-profile treatment entirely — just answer in one or two short sentences "
+    "like a normal chatbot would, e.g. \"Професорот <name> има консултации на <date> од <start> "
+    "до <end> часот, <location>.\" Don't add their title, email, cabinet, bio, or publications "
+    "unless the student actually asked about those too — a consultations question wants a "
+    "quick fact, not a profile.\n\n"
     "For anything else (announcements, general questions, multi-course comparisons), just "
     "use clear markdown prose/lists — the header+bullet template above is specifically for "
     "single-course and single-professor questions.\n\n"
@@ -190,6 +203,7 @@ _TYPE_LABEL = {
     "material": "материјали",
     "schedule": "распоред",
     "exam": "испитен термин",
+    "consultation": "консултации",
     "page": "страница",
 }
 _FRONTEND_HOST = urlparse(settings.frontend_origin).netloc.removeprefix("www.")

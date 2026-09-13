@@ -14,6 +14,7 @@ const TYPE_LABEL_KEYS: Record<string, TKey> = {
   material: "type_material",
   schedule: "type_schedule",
   exam: "type_exam",
+  consultation: "type_consultation",
   thesis: "type_thesis",
   page: "type_page",
 };

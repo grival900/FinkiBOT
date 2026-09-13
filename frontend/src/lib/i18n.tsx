@@ -45,6 +45,7 @@ const dict = {
   type_material: { mk: "Материјал", en: "Material" },
   type_schedule: { mk: "Распоред", en: "Schedule" },
   type_exam: { mk: "Испитен термин", en: "Exam entry" },
+  type_consultation: { mk: "Консултации", en: "Consultation" },
   type_thesis: { mk: "Тема", en: "Thesis" },
   type_page: { mk: "Информативна страница", en: "Info page" },
   loading: { mk: "Се вчитува…", en: "Loading…" },
