@@ -25,6 +25,7 @@ export const Route = createFileRoute("/mcp")({
 const SERVER_LABELS: Record<string, string> = {
   official: "finki-official — finki.ukim.mk",
   finki_hub: "finki-hub — finki-hub.com",
+  official_live: "finki-official-live — live search, not the local index",
 };
 
 function ToolCard({ tool }: { tool: McpTool }) {

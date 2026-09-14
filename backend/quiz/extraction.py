@@ -1,12 +1,8 @@
 import io
 
 from pptx import Presentation
-from pypdf import PdfReader
 
-
-def extract_text_from_pdf(data: bytes) -> str:
-    reader = PdfReader(io.BytesIO(data))
-    return "\n".join(page.extract_text() or "" for page in reader.pages)
+from backend.ingestion.file_extraction import extract_pdf_text as extract_text_from_pdf
 
 
 def extract_text_from_pptx(data: bytes) -> str:

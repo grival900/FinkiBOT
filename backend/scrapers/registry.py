@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Literal
 
+from backend.scrapers.finki_hub.consultations import scrape_consultations
 from backend.scrapers.finki_hub.courses import scrape_courses
 from backend.scrapers.finki_hub.recordings import scrape_recordings
 from backend.scrapers.finki_hub.schedules import scrape_schedules
@@ -61,7 +62,16 @@ SCRAPERS: list[ScraperEntry] = [
     ScraperEntry(name="official.subjects", source="official", fn=scrape_subjects, cadence="slow"),
     ScraperEntry(name="finki_hub.recordings", source="finki_hub", fn=scrape_recordings, cadence="slow"),
     ScraperEntry(name="finki_hub.staff", source="finki_hub", fn=scrape_staff, cadence="frequent"),
-    ScraperEntry(name="finki_hub.sessions", source="finki_hub", fn=scrape_sessions, cadence="frequent"),
+    # One request per active staff member's consultations page (~96 today) — by the
+    # cadence rule above that's a "slow" cost, unlike the single-JSON-fetch staff
+    # scraper above it, even though both read from the same staff.json.
+    ScraperEntry(name="finki_hub.consultations", source="finki_hub", fn=scrape_consultations, cadence="slow"),
+    # Same "slow" reasoning as consultations above: this used to be a single JSON
+    # fetch, but now does one HTTP GET + a full XLSX/PDF parse per session file
+    # (~40 files) to extract real exam content — "frequent" (hourly, non-incremental)
+    # would re-download and re-parse every session file every hour for no benefit,
+    # since session files essentially never change once published.
+    ScraperEntry(name="finki_hub.sessions", source="finki_hub", fn=scrape_sessions, cadence="slow"),
     ScraperEntry(
         name="finki_hub.thesis_archive", source="finki_hub", fn=scrape_thesis_archive, enabled=False, cadence="slow"
     ),

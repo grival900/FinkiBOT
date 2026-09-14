@@ -46,6 +46,7 @@ const dict = {
   type_schedule: { mk: "Распоред", en: "Schedule" },
   type_thesis: { mk: "Тема", en: "Thesis" },
   type_page: { mk: "Информативна страница", en: "Info page" },
+  type_consultation: { mk: "Консултации", en: "Consultations" },
   loading: { mk: "Се вчитува…", en: "Loading…" },
   error: { mk: "Грешка", en: "Error" },
   source_ref: { mk: "Извор", en: "Source" },

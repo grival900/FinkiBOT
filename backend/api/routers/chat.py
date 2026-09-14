@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from backend.api.schemas import ChatRequest
 from backend.core.config import get_settings
 from backend.core.llm import get_client
-from backend.core.retrieval import SearchResult, search
+from backend.core.retrieval import RECENCY_MATCH_BOOST, SearchResult, search
 from backend.core.site_settings import get_float_setting
 from backend.db import get_db
 
@@ -29,7 +29,10 @@ CHAT_RESULT_K = 6
 # chunk can be worth handing the model as background yet not worth naming as a source:
 # the long tail of the pool is usually an incidental keyword overlap, and listing it
 # under "Извори" just makes a correct answer look like it came from the wrong page.
-MAX_CITED_SOURCES = 4
+# Capped at 2 rather than higher: in practice the top one or two hits are the actual
+# source the answer is built on, and anything past that is rarely more than a
+# passing keyword match dressed up as a citation.
+MAX_CITED_SOURCES = 2
 # A document whose best chunk scores more than this below the top hit is dropped from
 # the citation list (not the context) — see `select_citation_sources`.
 CITATION_SCORE_GAP = 0.15
@@ -53,13 +56,15 @@ SYSTEM_PROMPT = (
     "means nothing more recent was found, not an oversight. In that case, say plainly "
     "that you don't have anything from this year and name the year(s) the information "
     "you do have is actually from, rather than presenting old announcements as current.\n\n"
-    "Some context entries have type=schedule: these are reference links (e.g. to an exam "
-    "session schedule spreadsheet), not documents with the actual dates in their text — "
-    "we don't have the file contents, only the link. When a schedule entry's title matches "
-    "what the student is asking about (e.g. they ask about the June exam session and a "
-    "schedule entry is titled 'јунска испитна сесија'), say you don't have the exact dates "
-    "but mention that specific entry — don't substitute a less relevant schedule entry just "
-    "because it's also present in the context.\n\n"
+    "Some context entries have type=schedule: for finki-hub.com sources these now include "
+    "the actual per-course exam date/time/room extracted from the schedule spreadsheet "
+    "(XLSX sessions have this in full; older PDF sessions may only have time/room, not an "
+    "exact date) — read the entry's text itself for the specific date/time/room rather than "
+    "assuming it's link-only. Official (finki.ukim.mk) schedule entries are still link-only "
+    "reference links with no parsed content — for those, say you don't have the exact dates "
+    "but mention the specific entry whose title matches what the student is asking about, "
+    "rather than substituting a less relevant one just because it's also present in the "
+    "context.\n\n"
     "Don't write a source list or any URLs/links yourself — the app appends an accurate "
     "source list automatically after your answer, from the same context you were given. "
     "Referring to a source by name in prose (e.g. \"according to the official course "
@@ -89,21 +94,73 @@ SYSTEM_PROMPT = (
 )
 
 
+_ACADEMIC_YEAR_RE = re.compile(r"^(\d{4})/(\d{4})")
+
+
+def _effective_year(r: SearchResult) -> int | None:
+    """The year to filter/boost `r` by. Directly `published_at.year` when we have a
+    real date. Pre-2022 finki_hub exam-session ("schedule") documents only got a PDF
+    extraction, which never parses a per-sheet date at all (see
+    `extract_session_file_content`) — `published_at` is `None` for them, which used to
+    make `prefer_current_year` treat them as "undated" and always keep, so an old
+    2021/2022 exam session rode alongside a current one in the same answer instead of
+    being filtered out (confirmed live: "кога е испит по маркетинг" returned both a
+    2026 and a 2021/2022 date). These documents do carry an `academic_year` string
+    ("2021/2022", see `parse_session_entry`) in their metadata even without a parsed
+    date, and every FINKI exam period (January/June/September) falls in the second
+    half of that academic year, so its second component is a good enough proxy year to
+    filter on."""
+    if r.published_at is not None:
+        return r.published_at.year
+    if r.type == "schedule":
+        m = _ACADEMIC_YEAR_RE.match(r.metadata.get("academic_year", ""))
+        if m:
+            return int(m.group(2))
+    return None
+
+
 def prefer_current_year(results: list[SearchResult], k: int, current_year: int) -> list[SearchResult]:
     """Recency bias for chat context — a query like "студентска служба" semantically
     matches near-identical announcement text posted every year, and cosine similarity
-    alone has no way to prefer this year's copy over 2014's. Undated results (courses,
-    professors, etc. — only `announcement` documents carry `published_at`, see
-    `scrapers/official_site/announcements.py`) are always kept since recency doesn't
-    apply to them. Among dated results, older years are dropped whenever at least one
-    current-year match exists for the same query; otherwise every dated result is kept
-    as a fallback, oldest included, since that's genuinely the best we have.
+    alone has no way to prefer this year's copy over 2014's. Results with no
+    `_effective_year` at all (professor bios, course syllabi, etc.) are always kept
+    since recency doesn't apply to them. Among the rest, older years are dropped
+    whenever at least one current-year match exists for the same query; otherwise
+    every dated result is kept as a fallback, oldest included, since that's genuinely
+    the best we have.
+
+    Narrowing to current-year matches isn't enough on its own: a current-year schedule
+    chunk still has to out-score whatever undated results the query also pulled in, and
+    a broad official course-syllabus page (long, topically on-target prose) routinely
+    scores *higher* than a short, specific schedule chunk on pure cosine similarity —
+    confirmed live: for "кога се полага дискретна математика" the one genuinely current
+    schedule chunk (0.557) lost to five undated syllabus pages (0.57-0.64) and was
+    dropped from the final top-k entirely. So a current-year match gets the same small
+    reordering bump `_apply_recency_boost` gives a freshly-published announcement
+    elsewhere in retrieval.py — enough to win close ties, not enough to drag an
+    off-topic dated result above a clearly-better undated one.
+
+    The boost affects ordering only, never `r.score` itself: `select_citation_sources`
+    (called on this same list right after) drops anything more than a fixed gap below
+    the top score, so permanently inflating a current-year match's score would inflate
+    that reference point too and could silently drop an unrelated, unboosted, still-
+    relevant source from the citation list purely because some other result got
+    boosted — confirmed live. Sorting on a computed key instead keeps every result's
+    `score` an honest, comparable cosine similarity for anything downstream.
     """
-    dated = [r for r in results if r.published_at is not None]
-    undated = [r for r in results if r.published_at is None]
-    current_year_matches = [r for r in dated if r.published_at.year == current_year]  # type: ignore[union-attr]
+    years = {id(r): _effective_year(r) for r in results}
+    dated = [r for r in results if years[id(r)] is not None]
+    undated = [r for r in results if years[id(r)] is None]
+    current_year_matches = [r for r in dated if years[id(r)] == current_year]
     kept_dated = current_year_matches if current_year_matches else dated
-    merged = sorted(kept_dated + undated, key=lambda r: r.score, reverse=True)
+
+    boosted_ids = {id(r) for r in current_year_matches}
+
+    def sort_key(r: SearchResult) -> float:
+        boost = RECENCY_MATCH_BOOST if id(r) in boosted_ids else 0.0
+        return min(1.0, r.score + boost)
+
+    merged = sorted(kept_dated + undated, key=sort_key, reverse=True)
     return merged[:k]
 
 

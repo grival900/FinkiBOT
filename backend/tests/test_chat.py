@@ -76,6 +76,29 @@ def test_prefer_current_year_always_keeps_undated_results():
     assert {r.document_id for r in kept} == {"old-announcement", "course"}
 
 
+def test_prefer_current_year_drops_old_undated_schedule_using_academic_year_metadata():
+    """The motivating bug: pre-2022 finki_hub exam sessions are PDF-extracted and never
+    get a parsed `published_at` at all (see `extract_session_file_content`), so without
+    this they'd fall into the "undated, always kept" bucket and ride alongside a genuine
+    current-year exam date in the same answer (confirmed live for "кога е испит по
+    маркетинг" — both a 2026 and a stale 2021/2022 date came back). The `academic_year`
+    metadata every schedule document carries (see `parse_session_entry`) is enough to
+    tell it's stale even with no parsed date."""
+    current = _dated(2026, document_id="current-schedule", type="schedule", score=0.6)
+    stale = _result(
+        document_id="stale-schedule",
+        type="schedule",
+        published_at=None,
+        score=0.95,
+        metadata={"academic_year": "2021/2022"},
+    )
+    course = _result(document_id="course", type="course", published_at=None, score=0.5)
+
+    kept = prefer_current_year([current, stale, course], k=6, current_year=2026)
+
+    assert {r.document_id for r in kept} == {"current-schedule", "course"}
+
+
 def test_prefer_current_year_respects_k():
     results = [_dated(2026, document_id=f"new-{i}", score=1.0 - i * 0.01) for i in range(10)]
 
@@ -83,6 +106,58 @@ def test_prefer_current_year_respects_k():
 
     assert len(kept) == 3
     assert [r.document_id for r in kept] == ["new-0", "new-1", "new-2"]
+
+
+def test_prefer_current_year_boosts_current_year_match_above_a_higher_scoring_undated_result():
+    """The motivating bug: a current-year schedule chunk (score 0.557) lost to five
+    undated official course-syllabus pages (0.57-0.64) on pure similarity and was
+    dropped from the final context entirely, even though it was the one result that
+    actually answered "when is the exam" — narrowing to current-year matches isn't
+    enough if they still have to out-score everything else unboosted."""
+    schedule_hit = _dated(2026, document_id="schedule", type="schedule", score=0.557)
+    syllabus_pages = [
+        _result(document_id=f"syllabus-{i}", type="course", published_at=None, score=score)
+        for i, score in enumerate([0.635, 0.590, 0.586, 0.579, 0.570])
+    ]
+
+    kept = prefer_current_year([schedule_hit, *syllabus_pages], k=6, current_year=2026)
+
+    assert kept[0].document_id == "schedule"
+    # The boost affects ordering only - r.score itself must stay the true, unboosted
+    # cosine similarity, since select_citation_sources' gap cutoff downstream compares
+    # against it (a permanently-inflated score would inflate that reference point too
+    # and could silently drop an unrelated, still-relevant, unboosted source).
+    assert kept[0].score == 0.557
+
+
+def test_prefer_current_year_boost_does_not_shrink_the_citation_gap_for_others():
+    """The follow-on bug a permanently-mutated score would cause: select_citation_sources
+    runs on this same list right after and drops anything more than CITATION_SCORE_GAP
+    below results[0].score. If the boost had inflated the boosted result's own score,
+    an unrelated unboosted source that's legitimately close to the *true* top score
+    could fall outside the gap purely because of someone else's boost."""
+    boosted = _dated(2026, document_id="boosted", url="https://example.com/boosted", score=0.50)
+    true_top = _result(
+        document_id="true-top", url="https://example.com/true-top", type="course", published_at=None, score=0.60
+    )
+    near_true_top = _result(
+        document_id="near-true-top",
+        url="https://example.com/near-true-top",
+        type="course",
+        published_at=None,
+        score=0.46,
+    )
+
+    kept = prefer_current_year([boosted, true_top, near_true_top], k=6, current_year=2026)
+    cited = select_citation_sources(kept, max_sources=10, score_gap=CITATION_SCORE_GAP)
+
+    # "boosted" outranks "true-top" in the returned order (that's the point of the
+    # boost), but its own .score is untouched (0.50, not 0.62) - so the gap check
+    # downstream isn't measured against an inflated reference, and both other
+    # legitimately-close sources survive.
+    assert kept[0].document_id == "boosted"
+    assert kept[0].score == 0.50
+    assert {r.document_id for r in cited} == {"boosted", "true-top", "near-true-top"}
 
 
 def test_citation_url_uses_internal_link_for_finki_hub_courses():

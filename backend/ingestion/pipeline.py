@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from backend.core.site_settings import get_bool_setting
 from backend.db import SessionLocal
-from backend.ingestion.chunking import chunk_text
+from backend.ingestion.chunking import get_chunks
 from backend.ingestion.embeddings import embed_texts
 from backend.models import Chunk, Document
 from backend.scrapers.normalize import NormalizedDocument
@@ -90,6 +90,15 @@ def upsert_document(db: Session, ndoc: NormalizedDocument) -> tuple[Document, Ou
         return doc, "new"
 
     if existing.content_hash == ndoc.content_hash:
+        # Content is the expensive part (it's what drives re-chunking/re-embedding,
+        # hence the early return), but published_at/metadata are cheap to keep in sync
+        # regardless — e.g. a scraper that starts deriving published_at from content it
+        # already had would otherwise never backfill existing rows, since a re-scrape
+        # produces byte-identical content and this branch would keep returning early
+        # before ever touching them. Same reasoning the "moved" branch above already
+        # applies to a URL change alongside unchanged content.
+        existing.published_at = ndoc.published_at
+        existing.doc_metadata = ndoc.metadata
         return existing, "unchanged"
 
     existing.title = ndoc.title
@@ -103,7 +112,7 @@ def upsert_document(db: Session, ndoc: NormalizedDocument) -> tuple[Document, Ou
 def reindex_document(db: Session, doc: Document) -> None:
     db.query(Chunk).filter(Chunk.document_id == doc.id).delete()
 
-    texts = chunk_text(doc.content)
+    texts = get_chunks(doc.type, doc.content)
     if not texts:
         return
     vectors = embed_texts(texts)
