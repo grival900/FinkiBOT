@@ -94,6 +94,41 @@ def test_extract_xlsx_schedule_grid_splits_disjoint_same_course_occurrences():
     assert "[10.09.2026 14:00-14:30 лаб. 1: Оперативни системи]" in matching
 
 
+def test_extract_xlsx_schedule_grid_skips_sheets_whose_title_is_not_a_plain_date():
+    """The motivating bug: some session files carry extra sheets titled e.g.
+    "b-25.06.2026" instead of a plain date, and the exact same "b-" block turned up
+    byte-for-byte in two different session files (2025/2026 June and September) —
+    leftover/stale content carried over between files, not a genuine second exam
+    group. Since it can't reliably be told apart from a real sheet, and it never
+    contributes to `published_at` anyway (`_parse_sheet_date` already rejects it), the
+    whole sheet is skipped rather than indexed as if it were this session's own."""
+    import io
+    from datetime import time as dtime
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "10.09.2026"
+    ws["B2"] = "лаб. 1"
+    ws["A3"] = dtime(8, 0)
+    ws["B3"] = "Структурно програмирање"
+
+    stray = wb.create_sheet("b-25.06.2026")
+    stray["B2"] = "лаб. 13"
+    stray["A3"] = dtime(15, 0)
+    stray["B3"] = "Маркетинг"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    text, published_at = extract_xlsx_schedule_grid(buf.getvalue())
+
+    assert "Структурно програмирање" in text
+    assert "Маркетинг" not in text
+    assert published_at == datetime(2026, 9, 10)
+
+
 def test_extract_xlsx_schedule_grid_empty_workbook_returns_empty_string_and_no_date():
     import io
 

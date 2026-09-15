@@ -14,6 +14,7 @@ from backend.core.llm import get_client
 from backend.core.retrieval import RECENCY_MATCH_BOOST, SearchResult, search
 from backend.core.site_settings import get_float_setting
 from backend.db import get_db
+from backend.mcp_servers.official_live_mcp.server import search_official_site_live
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 settings = get_settings()
@@ -25,14 +26,23 @@ settings = get_settings()
 CANDIDATE_POOL_K = 24
 CHAT_RESULT_K = 6
 
+# Only ever fires when the local index has nothing at all for the query (every
+# candidate fell below `chat_min_score`, or there were none) — a genuinely new
+# announcement/page finki.ukim.mk already has but the next reindex hasn't reached yet.
+# Deliberately not fired alongside a normal (non-empty) local result set: a real, if
+# imperfect, indexed match is still a better-grounded answer than an unindexed page we
+# only know the title and URL of.
+LIVE_FALLBACK_LIMIT = 3
+
 # Citation list is deliberately tighter than the context the model gets. A retrieved
 # chunk can be worth handing the model as background yet not worth naming as a source:
 # the long tail of the pool is usually an incidental keyword overlap, and listing it
 # under "Извори" just makes a correct answer look like it came from the wrong page.
-# Capped at 2 rather than higher: in practice the top one or two hits are the actual
-# source the answer is built on, and anything past that is rarely more than a
-# passing keyword match dressed up as a citation.
-MAX_CITED_SOURCES = 2
+# Capped at 1: in practice the single top hit is the actual source the answer is built
+# on, and anything past that is rarely more than a passing keyword match dressed up as
+# a citation. `select_citation_sources`'s score-gap cutoff already does the real work
+# of dropping unrelated tail matches — this cap is a hard backstop on top of it.
+MAX_CITED_SOURCES = 1
 # A document whose best chunk scores more than this below the top hit is dropped from
 # the citation list (not the context) — see `select_citation_sources`.
 CITATION_SCORE_GAP = 0.15
@@ -50,6 +60,13 @@ SYSTEM_PROMPT = (
     "schedules, deadlines, enrollment rules) from general knowledge — only state FINKI "
     "facts that appear in the provided context. If a FINKI-specific question has no "
     "matching context, say so plainly.\n\n"
+    "Some context entries are marked as a live search result instead of indexed "
+    "content: they carry only a title/type and no page text at all (our local index "
+    "had nothing for this query, so this is a same-topic page fetched live from "
+    "finki.ukim.mk as a fallback). Never invent what such a page says — tell the "
+    "student you found a page that's likely relevant but don't have its contents "
+    "indexed yet, and point them to it (the source list below your answer already "
+    "links it).\n\n"
     "Context entries include a date. For announcements specifically, the retrieval "
     "layer already prefers this year's matches over older ones when both exist for the "
     "same query — so if every announcement in your context is from a past year, that "
@@ -71,21 +88,51 @@ SYSTEM_PROMPT = (
     "page...\") is fine, but never write out a URL or a markdown link.\n\n"
     "Format every answer as markdown: use **bold** for labels and key terms, bullet lists "
     "for multiple facts, and blank lines between paragraphs — never a single wall of text.\n\n"
-    "When the question is clearly about one specific course, structure the answer as:\n"
+    "Match the scope of the question, not just its topic. A question about one specific "
+    "fact (an exam date, a consultation slot, an email, a room) gets *only* that fact — "
+    "don't pad it with unrelated detail the context happens to also contain (e.g. a full "
+    "course syllabus when only the exam date was asked, or a professor's bio when only "
+    "their consultations were asked). Use the fuller course/professor templates below "
+    "*only* when the question is genuinely general — \"кажи ми за...\", \"што е...\", or "
+    "just the course/professor's name with no further specifics. For anything narrower, "
+    "answer the specific thing asked, with at most one short sentence of context if it "
+    "helps confirm which course/professor is meant.\n\n"
+    "When the question is genuinely general and clearly about one specific course, "
+    "structure the answer as:\n"
     "### <course name>\n"
     "then a bullet list of the key facts actually present in the context (code, "
     "level/semester, ECTS credits, prerequisites, professors/assistants, accreditation "
     "programs — skip whatever you don't have, don't pad with 'N/A'), followed by a short "
     "paragraph for anything else worth saying (e.g. syllabus content, learning "
     "objectives).\n\n"
-    "When the question is clearly about one specific professor, structure the answer as:\n"
+    "When the question is genuinely general and clearly about one specific professor, "
+    "structure the answer as:\n"
     "### <professor name>\n"
     "then a bullet list of the key facts actually present (title/position, email, cabinet, "
     "consultations), followed by a short paragraph summarizing their bio/publications if "
     "present in the context.\n\n"
+    "When the question is specifically about a professor's consultations, structure the "
+    "answer as:\n"
+    "### <professor name> — консултации\n"
+    "then a bullet list with title/position and the courses they teach (if present in the "
+    "context) plus the scheduled slot(s) (date/time/location), or say plainly that no "
+    "slots are currently scheduled if that's what the context says. Leave out bio and "
+    "publications entirely — that belongs to the general professor template above, not "
+    "here. If a type=consultation context entry (Датум/Време/Локација) and a type=staff "
+    "entry (Кабинет) disagree on where the professor can be found, trust the consultation "
+    "entry's own Локација — it's the live, per-slot source, while the staff profile's "
+    "cabinet field can be stale.\n\n"
+    "When the question is specifically about an exam date/session for a course, answer "
+    "with just the date/time/room(s). Report only the year the student asked about; if "
+    "they didn't name one, use the message's stated date to judge which session is "
+    "current or next upcoming and report that one. If the context genuinely contains "
+    "several different sessions for the same course (e.g. a January and a June date), "
+    "name which session you're reporting (e.g. \"Јунска сесија: ...\") and only list the "
+    "others if the student asked for a specific session by name or for all of them — "
+    "don't recite every session found back to back by default.\n\n"
     "For anything else (announcements, general questions, multi-course comparisons), just "
-    "use clear markdown prose/lists — the header+bullet template above is specifically for "
-    "single-course and single-professor questions.\n\n"
+    "use clear markdown prose/lists — the templates above are specifically for the "
+    "narrower question types they each name.\n\n"
     "Keep answers concise and scannable: lead with the direct answer, don't restate the "
     "question, and don't pad with filler or repeat the same point across sources. It's fine "
     "to be longer when the question genuinely calls for it (e.g. summarizing a professor's "
@@ -95,6 +142,61 @@ SYSTEM_PROMPT = (
 
 
 _ACADEMIC_YEAR_RE = re.compile(r"^(\d{4})/(\d{4})")
+
+# A schedule chunk's own date, read straight out of its leading "[dd.mm.yyyy ...]"
+# record (see `chunk_schedule_by_date`, which groups every record for one calendar day
+# into the same chunk) — unlike `published_at`, which is one representative date for
+# the *entire* session file (see `_representative_date`), this is the actual day the
+# chunk's own content is about.
+_SCHEDULE_CHUNK_DATE_RE = re.compile(r"\[(\d{1,2})\.(\d{1,2})\.(\d{4})")
+_SCHEDULE_CHUNK_RECENCY_HORIZON_DAYS = 180
+# Deliberately smaller than RECENCY_MATCH_BOOST: this only needs to break ties *among*
+# same-year schedule chunks (see `_apply_schedule_chunk_recency_boost`), not compete
+# with the year-level boost that already separates current-year from stale-year
+# matches.
+SCHEDULE_CHUNK_RECENCY_BOOST = 0.08
+
+
+def _schedule_chunk_date(chunk_text: str) -> datetime | None:
+    m = _SCHEDULE_CHUNK_DATE_RE.search(chunk_text)
+    if m is None:
+        return None
+    day, month, year = (int(g) for g in m.groups())
+    try:
+        return datetime(year, month, day)
+    except ValueError:
+        return None
+
+
+def _apply_schedule_chunk_recency_boost(results: list[SearchResult], now: datetime) -> dict[int, float]:
+    """The motivating bug: a course's exam date exists in more than one same-year
+    session file at once (a colloquium, then January, then June, then September all
+    exist "this year") — `prefer_current_year`'s current-year boost treats every one of
+    them identically, so with only `CHAT_RESULT_K` slots to go around, whichever
+    session happened to score marginally higher on raw cosine similarity won the last
+    slot even when it was months stale and a genuinely later session's chunk for the
+    same course existed too (confirmed live: "кога се полага структурно
+    програмирање" surfaced a winter colloquium, January, and June session, but never
+    the current September one). Boosts each schedule chunk by how close its own date
+    is to `now` (in either direction — a session currently underway is exactly as
+    relevant as one about to start), so competing same-year schedule chunks for the
+    same course are actually ranked by which session is live/upcoming instead of by
+    embedding noise. Returns a `{id(result): boost}` map rather than mutating scores,
+    same reasoning as `prefer_current_year`'s own boost."""
+    now_naive = now.replace(tzinfo=None) if now.tzinfo is not None else now
+    boosts: dict[int, float] = {}
+    for r in results:
+        if r.type != "schedule":
+            continue
+        chunk_date = _schedule_chunk_date(r.chunk_text)
+        if chunk_date is None:
+            continue
+        distance_days = abs((now_naive - chunk_date).days)
+        remaining = 1 - distance_days / _SCHEDULE_CHUNK_RECENCY_HORIZON_DAYS
+        if remaining <= 0:
+            continue
+        boosts[id(r)] = SCHEDULE_CHUNK_RECENCY_BOOST * remaining
+    return boosts
 
 
 def _effective_year(r: SearchResult) -> int | None:
@@ -119,7 +221,9 @@ def _effective_year(r: SearchResult) -> int | None:
     return None
 
 
-def prefer_current_year(results: list[SearchResult], k: int, current_year: int) -> list[SearchResult]:
+def prefer_current_year(
+    results: list[SearchResult], k: int, current_year: int, now: datetime | None = None
+) -> list[SearchResult]:
     """Recency bias for chat context — a query like "студентска служба" semantically
     matches near-identical announcement text posted every year, and cosine similarity
     alone has no way to prefer this year's copy over 2014's. Results with no
@@ -155,9 +259,11 @@ def prefer_current_year(results: list[SearchResult], k: int, current_year: int) 
     kept_dated = current_year_matches if current_year_matches else dated
 
     boosted_ids = {id(r) for r in current_year_matches}
+    schedule_boosts = _apply_schedule_chunk_recency_boost(results, now or datetime.now(timezone.utc))
 
     def sort_key(r: SearchResult) -> float:
         boost = RECENCY_MATCH_BOOST if id(r) in boosted_ids else 0.0
+        boost += schedule_boosts.get(id(r), 0.0)
         return min(1.0, r.score + boost)
 
     merged = sorted(kept_dated + undated, key=sort_key, reverse=True)
@@ -211,6 +317,36 @@ def source_label(result: SearchResult) -> str:
     """Citation display text: title + what it is + which site the link opens."""
     kind = _TYPE_LABEL.get(result.type, result.type)
     return f"{result.title} ({kind}, {_display_host(citation_url(result))})"
+
+
+def live_results_to_search_results(items: list[dict]) -> list[SearchResult]:
+    """Wraps `search_official_site_live` hits (title/url/type/subtype only — see its
+    docstring) as `SearchResult`s so the existing context/citation pipeline (built for
+    indexed chunks) can carry them too, without a parallel code path. `chunk_text` is a
+    placeholder the model is told (system prompt) never to treat as real page content —
+    there is no excerpt to give it, only a title and a link. `score` is left at 0.0
+    (meaningless here, there was no vector search) since these only ever appear when
+    `results` was otherwise empty, so the gap cutoff in `select_citation_sources`
+    compares them only against each other."""
+    results = []
+    for item in items:
+        url = item.get("url")
+        if not url:
+            continue
+        results.append(
+            SearchResult(
+                document_id=f"live:{url}",
+                title=item.get("title") or url,
+                url=url,
+                source="official",
+                type=item.get("subtype") or item.get("type") or "page",
+                published_at=None,
+                chunk_text="(live search result — title and link only, page content not fetched)",
+                score=0.0,
+                metadata={"live": True},
+            )
+        )
+    return results
 
 
 def build_context(results: list[SearchResult]) -> str:
@@ -298,8 +434,10 @@ def _gemini_role(role: str) -> str:
 def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingResponse:
     min_score = get_float_setting(db, "chat_min_score", settings.chat_min_score)
     candidates = search(db, payload.message, k=CANDIDATE_POOL_K, min_score=min_score)
-    current_year = datetime.now(timezone.utc).year
-    results = prefer_current_year(candidates, k=CHAT_RESULT_K, current_year=current_year)
+    now = datetime.now(timezone.utc)
+    results = prefer_current_year(candidates, k=CHAT_RESULT_K, current_year=now.year, now=now)
+    if not results:
+        results = live_results_to_search_results(search_official_site_live(payload.message, limit=LIVE_FALLBACK_LIMIT))
     context = build_context(results)
     cited = select_citation_sources(results)
 
@@ -310,7 +448,11 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingRespon
     contents.append(
         types.Content(
             role="user",
-            parts=[types.Part.from_text(text=f"Context:\n{context}\n\nQuestion: {payload.message}")],
+            parts=[
+                types.Part.from_text(
+                    text=f"Today's date: {now.date().isoformat()}\n\nContext:\n{context}\n\nQuestion: {payload.message}"
+                )
+            ],
         )
     )
 

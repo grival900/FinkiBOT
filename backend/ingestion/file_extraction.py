@@ -167,6 +167,9 @@ def extract_xlsx_schedule_grid(data: bytes) -> tuple[str, datetime.datetime | No
     apart, and a model reading the run-on result can misattribute one record's time to
     an unrelated neighbouring course.
 
+    A worksheet whose title doesn't parse as a plain date at all (e.g. "b-25.06.2026")
+    is skipped entirely - see the loop below for why.
+
     Returns (text, representative_date) - a representative parsed sheet date (see
     `_representative_date`), for the caller to use as the document's `published_at`
     (None if no sheet title parsed as a date, e.g. an unexpected layout)."""
@@ -177,8 +180,18 @@ def extract_xlsx_schedule_grid(data: bytes) -> tuple[str, datetime.datetime | No
     for ws in wb.worksheets:
         date = ws.title.strip()
         parsed_date = _parse_sheet_date(date)
-        if parsed_date is not None:
-            sheet_dates.append(parsed_date)
+        if parsed_date is None:
+            # Confirmed live: some session files carry extra sheets whose title isn't a
+            # plain date at all (e.g. "b-25.06.2026") but whose *content* is otherwise a
+            # normal day of exam records — and the exact same "b-" block, byte for byte,
+            # turned up in two different session files (2025/2026 June and 2025/2026
+            # September), which only makes sense as leftover sheets carried over between
+            # files rather than a second real exam group. Since there's no reliable way
+            # to tell a genuine non-date sheet apart from this kind of stale carryover,
+            # and either way `_representative_date` couldn't use it, skip the sheet
+            # entirely rather than indexing content that isn't reliably this session's.
+            continue
+        sheet_dates.append(parsed_date)
         overrides = _resolve_merged_cells(ws)
 
         def cell_value(row: int, col: int):

@@ -91,6 +91,15 @@ def chunk_schedule_by_date(text: str) -> list[str]:
 
     preamble_end = text.find("[")
     preamble = text[:preamble_end].strip()
+    # Just the session name (e.g. "2025/2026 Јуни"), not the download-link line under
+    # it - carried into every day's own chunk below. The motivating bug: a bracketed
+    # record like "[26.06.2026 ... Маркетинг]" has no lexical connection at all to the
+    # session it belongs to, so a query naming a specific session/period ("во јунската
+    # сесија") had nothing session-level to match against and could just as easily
+    # surface the same course's date from a *different* session's chunk instead
+    # (confirmed live). The session name used to only survive as its own standalone
+    # preamble chunk, disconnected from every day's actual course records.
+    session_label = preamble.splitlines()[0] if preamble else ""
 
     # dict preserves insertion order, so no separate order-tracking list is needed.
     grouped: dict[str, list[str]] = {}
@@ -101,7 +110,8 @@ def chunk_schedule_by_date(text: str) -> list[str]:
 
     chunks: list[str] = []
     for day_records in grouped.values():
-        chunks.extend(_pack_records_to_budget(day_records, SCHEDULE_MAX_WORDS))
+        for day_chunk in _pack_records_to_budget(day_records, SCHEDULE_MAX_WORDS):
+            chunks.append(f"{session_label}\n{day_chunk}" if session_label else day_chunk)
     if preamble:
         chunks.insert(0, preamble)
     return chunks

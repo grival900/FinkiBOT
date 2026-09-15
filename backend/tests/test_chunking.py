@@ -50,6 +50,10 @@ def test_chunk_schedule_by_date_groups_same_day_records_into_one_chunk():
     assert "Друг предмет" not in same_day_chunk
     # The non-bracketed session-name/download-link preamble survives as its own chunk.
     assert any("Линк за преземање" in c for c in chunks)
+    # ...and its first line (just the session name, not the download link) is also
+    # carried into every day's own chunk, so a query naming the session/period has
+    # something to actually match against.
+    assert all(c.startswith("2025/2026 Септември\n") for c in chunks if "10.09.2026" in c or "11.09.2026" in c)
 
 
 def test_chunk_schedule_by_date_splits_a_busy_day_once_it_exceeds_the_budget():

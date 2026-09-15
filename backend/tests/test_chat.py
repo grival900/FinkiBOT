@@ -7,6 +7,7 @@ from backend.api.routers.chat import (
     build_context,
     build_sources_block,
     citation_url,
+    live_results_to_search_results,
     prefer_current_year,
     select_citation_sources,
     source_label,
@@ -97,6 +98,55 @@ def test_prefer_current_year_drops_old_undated_schedule_using_academic_year_meta
     kept = prefer_current_year([current, stale, course], k=6, current_year=2026)
 
     assert {r.document_id for r in kept} == {"current-schedule", "course"}
+
+
+def test_prefer_current_year_prefers_the_schedule_session_closest_to_today():
+    """The motivating bug: a course's exam date exists in several same-year session
+    files at once (a winter colloquium, January, June, September) — all pass the
+    current-year filter equally, so with only `k` slots to go around, whichever
+    session scored marginally higher on raw embedding similarity won a slot even when
+    it was months stale (confirmed live: "кога се полага структурно програмирање"
+    surfaced November/January/June sessions but never the live September one). The
+    session chunk closest to "now" should win the tie instead."""
+    now = datetime(2026, 9, 14, tzinfo=timezone.utc)
+    stale_january = _dated(
+        2026,
+        document_id="january",
+        type="schedule",
+        score=0.60,
+        chunk_text="[15.01.2026 08:00 лаб. 2: Структурно програмирање]",
+    )
+    stale_june = _dated(
+        2026,
+        document_id="june",
+        type="schedule",
+        score=0.60,
+        chunk_text="[16.06.2026 08:00 лаб. 2: Структурно програмирање]",
+    )
+    live_september = _dated(
+        2026,
+        document_id="september",
+        type="schedule",
+        score=0.58,
+        chunk_text="[03.09.2026 08:00 лаб. 2: Структурно програмирање]",
+    )
+
+    kept = prefer_current_year([stale_january, stale_june, live_september], k=1, current_year=2026, now=now)
+
+    assert [r.document_id for r in kept] == ["september"]
+
+
+def test_prefer_current_year_schedule_boost_does_not_affect_non_schedule_results():
+    """The boost only ever applies to `type == "schedule"` results with a parseable
+    leading chunk date — everything else (announcements, courses, etc.) is untouched,
+    since `SCHEDULE_CHUNK_RECENCY_BOOST` only makes sense relative to a session's own
+    calendar day."""
+    now = datetime(2026, 9, 14, tzinfo=timezone.utc)
+    announcement = _dated(2026, document_id="ann", type="announcement", score=0.5, chunk_text="no date here")
+
+    kept = prefer_current_year([announcement], k=1, current_year=2026, now=now)
+
+    assert kept[0].score == 0.5
 
 
 def test_prefer_current_year_respects_k():
@@ -198,12 +248,17 @@ def test_select_citation_sources_drops_the_low_scoring_tail():
 
 
 def test_select_citation_sources_keeps_documents_within_the_gap():
+    """Isolates the gap-keeping logic from the separate `max_sources` cap (which
+    `MAX_CITED_SOURCES` — the default `select_citation_sources` uses — deliberately
+    keeps at 1): a generous explicit cap here means this test is only exercising
+    whether both within-gap documents survive, not how many the caller chooses to cap
+    at."""
     results = [
         _result(document_id="a", url="https://example.com/a", score=0.70),
         _result(document_id="b", url="https://example.com/b", score=0.70 - CITATION_SCORE_GAP + 0.02),
     ]
 
-    picked = select_citation_sources(results)
+    picked = select_citation_sources(results, max_sources=10)
 
     assert [r.document_id for r in picked] == ["a", "b"]
 
@@ -225,6 +280,27 @@ def test_select_citation_sources_dedupes_by_document_and_caps_count():
 
 def test_select_citation_sources_empty_input():
     assert select_citation_sources([]) == []
+
+
+def test_live_results_to_search_results_wraps_title_url_only_hits():
+    """`search_official_site_live` returns title/url/type/subtype only (no excerpt) —
+    the wrapper has to fill in every other `SearchResult` field with something the rest
+    of the pipeline (build_context/select_citation_sources) can work with."""
+    items = [{"title": "Испитна сесија", "url": "https://finki.ukim.mk/x", "type": "post", "subtype": "schedule"}]
+
+    wrapped = live_results_to_search_results(items)
+
+    assert len(wrapped) == 1
+    r = wrapped[0]
+    assert r.title == "Испитна сесија"
+    assert r.url == "https://finki.ukim.mk/x"
+    assert r.type == "schedule"
+    assert r.document_id == "live:https://finki.ukim.mk/x"
+    assert r.published_at is None
+
+
+def test_live_results_to_search_results_skips_items_with_no_url():
+    assert live_results_to_search_results([{"title": "No URL"}]) == []
 
 
 def test_select_citation_sources_dedupes_documents_that_resolve_to_one_url():
