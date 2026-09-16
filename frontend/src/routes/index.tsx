@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
-import { streamChat, type ChatMessage } from "@/lib/api";
+import { streamChat, type ChatMessage, type LlmProvider } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { Markdown } from "@/components/Markdown";
@@ -46,10 +46,12 @@ function ChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeProvider, setActiveProvider] = useState<LlmProvider | null>(null);
   const idRef = useRef<string>(newId());
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    setActiveProvider(null);
     if (convId) {
       const conv = loadConversations(user?.id).find((x) => x.id === convId);
       if (conv) {
@@ -92,10 +94,16 @@ function ChatPage() {
     setLoading(true);
     let acc = "";
     try {
-      await streamChat(text, history, (chunk) => {
-        acc += chunk;
-        setMessages([...withUser, { role: "assistant", content: acc }]);
-      });
+      await streamChat(
+        text,
+        history,
+        (chunk) => {
+          acc += chunk;
+          setMessages([...withUser, { role: "assistant", content: acc }]);
+        },
+        undefined,
+        setActiveProvider,
+      );
       persist([...withUser, { role: "assistant", content: acc }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -156,6 +164,20 @@ function ChatPage() {
       </div>
 
       <div className="border-t border-border bg-background">
+        {activeProvider ? (
+          <div className="mx-auto flex w-full max-w-3xl px-6 pt-3">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-accent px-2.5 py-0.5 text-xs text-accent-foreground">
+              <span
+                className={
+                  activeProvider === "gemini"
+                    ? "size-1.5 rounded-full bg-blue-500"
+                    : "size-1.5 rounded-full bg-orange-500"
+                }
+              />
+              {t("answered_by")}: {activeProvider === "gemini" ? "Gemini" : "Groq"}
+            </span>
+          </div>
+        ) : null}
         <form onSubmit={send} className="mx-auto flex w-full max-w-3xl gap-2 px-6 py-4">
           <input
             value={input}

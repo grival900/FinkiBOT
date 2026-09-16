@@ -66,6 +66,10 @@ def get_bool_setting(db: Session, key: str, default: bool) -> bool:
     return get_setting(db, key, default, _parse_bool)
 
 
+def get_str_setting(db: Session, key: str, default: str) -> str:
+    return get_setting(db, key, default, str)
+
+
 def set_setting(db: Session, key: str, value: object) -> None:
     row = db.get(SiteSetting, key)
     serialized = _serialize(value)

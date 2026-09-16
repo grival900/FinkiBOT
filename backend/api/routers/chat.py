@@ -5,15 +5,14 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from google.genai import types
 from sqlalchemy.orm import Session
 
 from backend.api.schemas import ChatRequest
 from backend.core.chat_tools import build_chat_tools
 from backend.core.config import get_settings
-from backend.core.llm import get_client
+from backend.core.llm_providers import stream_chat_with_failover
 from backend.core.retrieval import RECENCY_MATCH_BOOST, SearchResult, search
-from backend.core.site_settings import get_float_setting
+from backend.core.site_settings import get_float_setting, get_str_setting
 from backend.db import get_db
 from backend.mcp_servers.official_live_mcp.server import search_official_site_live
 
@@ -458,18 +457,6 @@ def _sources_cut_index(text: str) -> int | None:
     return m.start() if m else None
 
 
-def _gemini_role(role: str) -> str:
-    """Gemini uses "model" where Anthropic/OpenAI-style APIs use "assistant"."""
-    return "model" if role == "assistant" else "user"
-
-
-# Bounds the agentic tool-calling loop (google-genai's own default is 10) — generous
-# enough for a multi-hop compound question (find_courses_taught_by, then one search
-# call per course found) without an unbounded worst case on latency/cost if the model
-# gets stuck re-querying.
-MAX_TOOL_CALLS = 8
-
-
 @router.post("")
 def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingResponse:
     min_score = get_float_setting(db, "chat_min_score", settings.chat_min_score)
@@ -486,57 +473,40 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingRespon
     tool_results: list[SearchResult] = []
     tools = build_chat_tools(db, min_score, now, tool_results)
 
-    contents = [
-        types.Content(role=_gemini_role(m.role), parts=[types.Part.from_text(text=m.content)])
-        for m in payload.history
-    ]
-    contents.append(
-        types.Content(
-            role="user",
-            parts=[
-                types.Part.from_text(
-                    text=f"Today's date: {now.date().isoformat()}\n\nContext:\n{context}\n\nQuestion: {payload.message}"
-                )
-            ],
-        )
+    # Neutral (OpenAI-style) role/content shape — `ChatMessage.role` is already
+    # "user"/"assistant", so this needs no mapping itself; each provider adapter in
+    # `llm_providers.py` converts it to its own SDK's shape (Gemini wants
+    # role="model" and Content/Part objects, Groq wants this shape almost verbatim).
+    messages = [{"role": m.role, "content": m.content} for m in payload.history]
+    messages.append(
+        {
+            "role": "user",
+            "content": f"Today's date: {now.date().isoformat()}\n\nContext:\n{context}\n\nQuestion: {payload.message}",
+        }
     )
 
-    client = get_client()
+    preferred = get_str_setting(db, "llm_provider", settings.llm_provider)
+    # Forces the first chunk out of whichever provider ends up serving this request
+    # *before* the streaming response starts, so a quota/rate-limit error on the
+    # preferred provider can fall back to the other one without ever sending the
+    # client a byte from the failed attempt — and so `provider_used` is known in time
+    # to go in a response header (see the visual "answered by" indicator in the
+    # frontend), which couldn't be set after streaming has already begun.
+    provider_used, chunks = stream_chat_with_failover(preferred, messages, tools, SYSTEM_PROMPT)
 
     def event_stream() -> Iterator[str]:
-        stream = client.models.generate_content_stream(
-            model=settings.llm_model,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                max_output_tokens=4096,
-                temperature=0.2,
-                tools=tools,
-                automatic_function_calling=types.AutomaticFunctionCallingConfig(maximum_remote_calls=MAX_TOOL_CALLS),
-                # Thinking was previously disabled outright (thinking_budget=0) for
-                # latency, back when this endpoint was pure grounded lookup +
-                # rephrasing with no decision to make. Now the model has to decide
-                # *whether* a compound question needs a tool call at all and how to
-                # chain them (e.g. find_courses_taught_by, then one schedule search
-                # per course found) — -1 (dynamic) lets it spend thinking budget only
-                # when a question actually calls for that reasoning, rather than
-                # paying a fixed cost neither the simple nor the compound case needs
-                # to pay to the same degree.
-                thinking_config=types.ThinkingConfig(thinking_budget=-1),
-            ),
-        )
         acc = ""
         sent = 0
-        for chunk in stream:
-            if not chunk.text:
+        for chunk_text in chunks:
+            if not chunk_text:
                 continue
-            acc += chunk.text
+            acc += chunk_text
             cut = _sources_cut_index(acc)
             if cut is not None:
                 if cut > sent:
                     yield acc[sent:cut]
                 sent = len(acc)
-                for _ in stream:  # drain the rest, discard the model's own list
+                for _ in chunks:  # drain the rest, discard the model's own list
                     pass
                 break
             safe = len(acc) - _HEADING_LOOKBACK
@@ -555,4 +525,4 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingRespon
         all_results = sorted(results + tool_results, key=lambda r: r.score, reverse=True)
         yield build_sources_block(select_citation_sources(all_results))
 
-    return StreamingResponse(event_stream(), media_type="text/plain")
+    return StreamingResponse(event_stream(), media_type="text/plain", headers={"X-LLM-Provider": provider_used})

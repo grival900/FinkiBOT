@@ -20,11 +20,13 @@ from backend.api.schemas import (
 )
 from backend.core.auth import require_admin
 from backend.core.config import get_settings
+from backend.core.llm_providers import PROVIDERS
 from backend.core.site_settings import (
     get_bool_setting,
     get_float_setting,
     get_int_or_none_setting,
     get_int_setting,
+    get_str_setting,
     set_setting,
 )
 from backend.core.users import (
@@ -292,6 +294,7 @@ def _effective_settings(db: Session) -> SiteSettingsOut:
         scheduler_slow_interval_minutes=get_int_setting(
             db, "scheduler_slow_interval_minutes", defaults.scheduler_slow_interval_minutes
         ),
+        llm_provider=get_str_setting(db, "llm_provider", defaults.llm_provider),
         scrapers=[
             ScraperEnabledOut(
                 name=entry.name,
@@ -332,6 +335,11 @@ def update_site_settings(payload: SiteSettingsPatch, request: Request, db: Sessi
         set_setting(db, "scheduler_slow_interval_minutes", payload.scheduler_slow_interval_minutes)
         if scheduler is not None:
             scheduler.reschedule_job("scrape_slow", trigger="interval", minutes=payload.scheduler_slow_interval_minutes)
+
+    if payload.llm_provider is not None:
+        if payload.llm_provider not in PROVIDERS:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown provider: {payload.llm_provider}")
+        set_setting(db, "llm_provider", payload.llm_provider)
 
     if payload.scraper_enabled:
         valid_names = {entry.name for entry in SCRAPERS}

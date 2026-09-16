@@ -180,6 +180,7 @@ class SiteSettingsOut(BaseModel):
     enable_scheduler: bool
     scheduler_interval_minutes: int
     scheduler_slow_interval_minutes: int
+    llm_provider: str
     scrapers: list[ScraperEnabledOut]
 
 
@@ -190,4 +191,5 @@ class SiteSettingsPatch(BaseModel):
     enable_scheduler: bool | None = None
     scheduler_interval_minutes: int | None = None
     scheduler_slow_interval_minutes: int | None = None
+    llm_provider: str | None = None
     scraper_enabled: dict[str, bool] | None = None

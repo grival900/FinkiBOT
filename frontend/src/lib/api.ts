@@ -165,6 +165,8 @@ export type TokenResponse = { access_token: string; token_type: string; user: Au
 
 export type ScraperEnabled = { name: string; enabled: boolean };
 
+export type LlmProvider = "gemini" | "groq";
+
 export type SiteSettings = {
   scrape_announcement_limit: number | null;
   scrape_subjects_limit: number | null;
@@ -172,6 +174,7 @@ export type SiteSettings = {
   enable_scheduler: boolean;
   scheduler_interval_minutes: number;
   scheduler_slow_interval_minutes: number;
+  llm_provider: LlmProvider;
   scrapers: ScraperEnabled[];
 };
 
@@ -207,6 +210,7 @@ export async function streamChat(
   history: ChatMessage[],
   onChunk: (text: string) => void,
   signal?: AbortSignal,
+  onProvider?: (provider: LlmProvider | null) => void,
 ): Promise<void> {
   const res = await fetch(apiUrl("/chat"), {
     method: "POST",
@@ -217,6 +221,12 @@ export async function streamChat(
   if (!res.ok || !res.body) {
     throw new Error(`${res.status} ${res.statusText}`);
   }
+  // Set once the response headers arrive, before any body bytes — the server picks
+  // this synchronously (including a possible fallback to the other provider) before
+  // it starts streaming, specifically so this can be shown right away rather than
+  // only once the answer itself starts appearing.
+  const provider = res.headers.get("X-LLM-Provider");
+  onProvider?.(provider === "gemini" || provider === "groq" ? provider : null);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   for (;;) {

@@ -25,6 +25,7 @@ const dict = {
   no_history: { mk: "Сè уште нема разговори", en: "No conversations yet" },
   chat_placeholder: { mk: "Прашај нешто за ФИНКИ…", en: "Ask something about FINKI…" },
   send: { mk: "Испрати", en: "Send" },
+  answered_by: { mk: "Одговори", en: "Answered by" },
   chat_empty: {
     mk: "Постави прашање за соопштенија, предмети, професори или распоред.",
     en: "Ask about announcements, courses, professors or schedules.",

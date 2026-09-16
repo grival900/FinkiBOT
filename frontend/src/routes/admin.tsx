@@ -539,6 +539,19 @@ function SettingsSection() {
           />
           <span className="text-sm">ENABLE_SCHEDULER</span>
         </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-muted-foreground">LLM_PROVIDER</span>
+          <select
+            value={settings.llm_provider}
+            onChange={(e) =>
+              setSettings({ ...settings, llm_provider: e.target.value as SiteSettings["llm_provider"] })
+            }
+            className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-ring"
+          >
+            <option value="gemini">Gemini</option>
+            <option value="groq">Groq</option>
+          </select>
+        </label>
       </div>
 
       <div className="rounded-lg border border-border bg-card p-4">
