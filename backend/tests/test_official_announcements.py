@@ -1,60 +1,71 @@
+import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from backend.scrapers.official_site import announcements
-from backend.scrapers.official_site.announcements import parse_detail_html, parse_listing_html, scrape_announcements
+from backend.scrapers.official_site.announcements import scrape_announcements
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def test_parse_listing_html_extracts_title_url_and_date():
-    html = (FIXTURES / "announcement_listing.html").read_text(encoding="utf-8")
-    rows = parse_listing_html(html)
-
-    assert len(rows) == 2
-    title, url, date_text = rows[0]
-    assert title == "Запишување нови студенти во учебната 2026/2027 година"
-    assert url == "https://finki.ukim.mk/announcements/zapishuvanje-novi-studenti-0/"
-    assert date_text == "2026-07-20T10:00:19+02:00"
+def _load_rows() -> list[dict]:
+    return json.loads((FIXTURES / "wp_announcement_response.json").read_text(encoding="utf-8"))
 
 
-def test_parse_detail_html_extracts_content_and_strips_share_widget():
-    html = (FIXTURES / "announcement_detail.html").read_text(encoding="utf-8")
-    content = parse_detail_html(html)
+def _row(slug: str, date: str | None = "2026-01-01T00:00:00") -> dict:
+    return {
+        "link": f"https://finki.ukim.mk/announcements/{slug}/",
+        "title": {"rendered": slug},
+        "content": {"rendered": f"<p>body {slug}</p>"},
+        "date": date,
+    }
 
-    assert "Ве известуваме" in content
-    assert "Facebook" not in content
+
+def _paged_response(rows: list[dict]) -> MagicMock:
+    return MagicMock(headers={"X-WP-TotalPages": "1"}, json=MagicMock(return_value=rows))
+
+
+def test_scrape_announcements_parses_a_real_fixture_row():
+    rows = _load_rows()
+    with (
+        patch.object(announcements, "make_client"),
+        patch.object(announcements, "get", return_value=_paged_response(rows)),
+        patch.object(announcements, "get_setting_cached", return_value=None),
+    ):
+        docs = list(scrape_announcements())
+
+    assert len(docs) == len(rows)
+    first = docs[0]
+    assert first.type == "announcement"
+    assert first.source == "official"
+    assert first.url == rows[0]["link"]
+    assert "<p>" not in first.content
 
 
 def test_scrape_announcements_stops_at_the_configured_limit():
     """The listing is newest-first, so a limit caps this to the N most recent
     announcements — verified here against a fake 5-row listing, no live network."""
-    fake_rows = [
-        (f"Title {i}", f"https://finki.ukim.mk/announcements/item-{i}/", "2026-01-01T00:00:00+01:00")
-        for i in range(5)
-    ]
+    fake_rows = [_row(f"item-{i}") for i in range(5)]
 
     with (
-        patch.object(announcements, "_iter_listing_rows", return_value=iter(fake_rows)),
-        patch.object(announcements, "_fetch_detail", return_value="body text"),
         patch.object(announcements, "make_client"),
+        patch.object(announcements, "get", return_value=_paged_response(fake_rows)),
         patch.object(announcements, "get_setting_cached", return_value=2),
     ):
         docs = list(scrape_announcements())
 
-    assert [d.title for d in docs] == ["Title 0", "Title 1"]
+    assert [d.url for d in docs] == [
+        "https://finki.ukim.mk/announcements/item-0/",
+        "https://finki.ukim.mk/announcements/item-1/",
+    ]
 
 
 def test_scrape_announcements_unlimited_by_default():
-    fake_rows = [
-        (f"Title {i}", f"https://finki.ukim.mk/announcements/item-{i}/", "2026-01-01T00:00:00+01:00")
-        for i in range(5)
-    ]
+    fake_rows = [_row(f"item-{i}") for i in range(5)]
 
     with (
-        patch.object(announcements, "_iter_listing_rows", return_value=iter(fake_rows)),
-        patch.object(announcements, "_fetch_detail", return_value="body text"),
         patch.object(announcements, "make_client"),
+        patch.object(announcements, "get", return_value=_paged_response(fake_rows)),
         patch.object(announcements, "get_setting_cached", return_value=None),
     ):
         docs = list(scrape_announcements())
@@ -67,20 +78,43 @@ def test_scrape_announcements_incremental_skips_known_and_stops_after_a_run_of_t
     ones, then bails once INCREMENTAL_STOP_AFTER_KNOWN known ones have gone by in a row
     — it does not walk the rest of the board."""
     total = announcements.INCREMENTAL_STOP_AFTER_KNOWN + 20
-    fake_rows = [
-        (f"Title {i}", f"https://finki.ukim.mk/announcements/item-{i}/", "2026-01-01T00:00:00+01:00")
-        for i in range(total)
-    ]
+    fake_rows = [_row(f"item-{i}") for i in range(total)]
     # first two are new, everything after is already indexed
-    known = {url for _, url, _ in fake_rows[2:]}
+    known = {row["link"] for row in fake_rows[2:]}
 
     with (
-        patch.object(announcements, "_iter_listing_rows", return_value=iter(fake_rows)),
-        patch.object(announcements, "_fetch_detail", return_value="body text") as fetch_detail,
         patch.object(announcements, "make_client"),
+        patch.object(announcements, "get", return_value=_paged_response(fake_rows)) as mock_get,
         patch.object(announcements, "get_setting_cached", return_value=None),
     ):
         docs = list(scrape_announcements(skip_urls=known))
 
-    assert [d.title for d in docs] == ["Title 0", "Title 1"]
-    assert fetch_detail.call_count == 2  # never fetched a known URL
+    assert [d.url for d in docs] == [
+        "https://finki.ukim.mk/announcements/item-0/",
+        "https://finki.ukim.mk/announcements/item-1/",
+    ]
+    # a single page already covers well past the stop-after-known threshold, so the
+    # lazy generator never needs to request a (nonexistent) second page
+    assert mock_get.call_count == 1
+
+
+def test_scrape_announcements_paginates_lazily_and_stops_once_the_limit_is_reached():
+    """Two pages behind X-WP-TotalPages=2 — the limit is reached inside page 1, so the
+    scraper must never request page 2 at all (the point of keeping `_iter_rows` lazy
+    rather than materializing every page up front)."""
+    page1 = [_row("a"), _row("b")]
+    page2 = [_row("c")]
+    responses = [
+        MagicMock(headers={"X-WP-TotalPages": "2"}, json=MagicMock(return_value=page1)),
+        MagicMock(headers={"X-WP-TotalPages": "2"}, json=MagicMock(return_value=page2)),
+    ]
+
+    with (
+        patch.object(announcements, "make_client"),
+        patch.object(announcements, "get", side_effect=responses) as mock_get,
+        patch.object(announcements, "get_setting_cached", return_value=1),
+    ):
+        docs = list(scrape_announcements())
+
+    assert [d.url for d in docs] == ["https://finki.ukim.mk/announcements/a/"]
+    assert mock_get.call_count == 1

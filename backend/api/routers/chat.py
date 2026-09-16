@@ -9,6 +9,7 @@ from google.genai import types
 from sqlalchemy.orm import Session
 
 from backend.api.schemas import ChatRequest
+from backend.core.chat_tools import build_chat_tools
 from backend.core.config import get_settings
 from backend.core.llm import get_client
 from backend.core.retrieval import RECENCY_MATCH_BOOST, SearchResult, search
@@ -38,11 +39,13 @@ LIVE_FALLBACK_LIMIT = 3
 # chunk can be worth handing the model as background yet not worth naming as a source:
 # the long tail of the pool is usually an incidental keyword overlap, and listing it
 # under "Извори" just makes a correct answer look like it came from the wrong page.
-# Capped at 1: in practice the single top hit is the actual source the answer is built
-# on, and anything past that is rarely more than a passing keyword match dressed up as
-# a citation. `select_citation_sources`'s score-gap cutoff already does the real work
-# of dropping unrelated tail matches — this cap is a hard backstop on top of it.
-MAX_CITED_SOURCES = 1
+# `select_citation_sources`'s score-gap cutoff already does the real work of dropping
+# unrelated tail matches — this cap is a backstop on top of it. Higher than the old
+# single-source cap: a tool-calling answer can now legitimately be built from several
+# separate, independently-searched-for sources at once (e.g. one exam date per course
+# for a professor who teaches several) rather than the one hardcoded hop's single
+# course this used to be capped around.
+MAX_CITED_SOURCES = 5
 # A document whose best chunk scores more than this below the top hit is dropped from
 # the citation list (not the context) — see `select_citation_sources`.
 CITATION_SCORE_GAP = 0.15
@@ -58,8 +61,32 @@ SYSTEM_PROMPT = (
     "unavailable.\n\n"
     "Never fabricate FINKI-specific information (course details, professor names, exam "
     "schedules, deadlines, enrollment rules) from general knowledge — only state FINKI "
-    "facts that appear in the provided context. If a FINKI-specific question has no "
-    "matching context, say so plainly.\n\n"
+    "facts that appear in the provided context or that you retrieved yourself with the "
+    "tools below. If a FINKI-specific question has no matching context and no tool call "
+    "turns up anything either, say so plainly.\n\n"
+    "You also have tools to look up more FINKI data directly. The context above is a "
+    "single best-effort search for the question as a whole — it often finds one part of "
+    "a compound question (e.g. a professor's own bio, or by coincidence just one of "
+    "their courses' exam entries) but not the rest, because those facts live in "
+    "separate documents with no lexical link between them: a professor's page never "
+    "names their courses' exam dates, and a course's exam-schedule entry never names "
+    "who teaches it. Call tools proactively to bridge gaps like this rather than saying "
+    "the information is unavailable when a tool could find it.\n\n"
+    "Mandatory rule: whenever a question is about a named professor's courses/exams/"
+    "materials in general — not one specific course named in the question itself — you "
+    "must call `find_courses_taught_by` for that professor first, then call the "
+    "relevant tool (`search_exam_sessions`/`search_materials`/`search_consultations`/"
+    "etc.) once per course it returns, *before* answering. Do this even if the context "
+    "above already seems to contain an answer — a single upfront search can coincidentally "
+    "surface one of the professor's courses without the rest, and answering from that "
+    "alone silently drops every other course the student was actually asking about. "
+    "Only skip this when the question already names one specific course, or is clearly "
+    "just about the professor as a person (bio, email, cabinet) with no course/exam/"
+    "materials angle at all.\n\n"
+    "If a question asks about *every* course/exam/etc. matching something more broadly "
+    "(not just one professor), call the relevant tool with a higher `limit` (up to ~20) "
+    "rather than only looking at the first few, and cover everything you actually found "
+    "rather than stopping after one.\n\n"
     "Some context entries are marked as a live search result instead of indexed "
     "content: they carry only a title/type and no page text at all (our local index "
     "had nothing for this query, so this is a same-topic page fetched live from "
@@ -129,7 +156,10 @@ SYSTEM_PROMPT = (
     "several different sessions for the same course (e.g. a January and a June date), "
     "name which session you're reporting (e.g. \"Јунска сесија: ...\") and only list the "
     "others if the student asked for a specific session by name or for all of them — "
-    "don't recite every session found back to back by default.\n\n"
+    "don't recite every session found back to back by default. When the question asks "
+    "about a *professor's* exams rather than one course by name, report every course you "
+    "found an exam date for (one bullet per course: course name, then date/time/room) — "
+    "don't report only the first one and drop the rest.\n\n"
     "For anything else (announcements, general questions, multi-course comparisons), just "
     "use clear markdown prose/lists — the templates above are specifically for the "
     "narrower question types they each name.\n\n"
@@ -297,6 +327,9 @@ _TYPE_LABEL = {
     "material": "материјали",
     "schedule": "распоред",
     "page": "страница",
+    "event": "настан",
+    "project": "проект",
+    "job": "оглас за работа/пракса",
 }
 _FRONTEND_HOST = urlparse(settings.frontend_origin).netloc.removeprefix("www.")
 
@@ -430,6 +463,13 @@ def _gemini_role(role: str) -> str:
     return "model" if role == "assistant" else "user"
 
 
+# Bounds the agentic tool-calling loop (google-genai's own default is 10) — generous
+# enough for a multi-hop compound question (find_courses_taught_by, then one search
+# call per course found) without an unbounded worst case on latency/cost if the model
+# gets stuck re-querying.
+MAX_TOOL_CALLS = 8
+
+
 @router.post("")
 def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingResponse:
     min_score = get_float_setting(db, "chat_min_score", settings.chat_min_score)
@@ -439,7 +479,12 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingRespon
     if not results:
         results = live_results_to_search_results(search_official_site_live(payload.message, limit=LIVE_FALLBACK_LIMIT))
     context = build_context(results)
-    cited = select_citation_sources(results)
+
+    # Mutated by the tool closures as the model calls them mid-stream (see
+    # `build_chat_tools`) — read only after the stream is fully consumed below, so it
+    # reflects every tool call the model actually made, not just the upfront search.
+    tool_results: list[SearchResult] = []
+    tools = build_chat_tools(db, min_score, now, tool_results)
 
     contents = [
         types.Content(role=_gemini_role(m.role), parts=[types.Part.from_text(text=m.content)])
@@ -466,11 +511,18 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingRespon
                 system_instruction=SYSTEM_PROMPT,
                 max_output_tokens=4096,
                 temperature=0.2,
-                # gemini-2.5-flash runs an extended "thinking" pass by default — measured
-                # ~3s added to time-to-first-token for zero benefit on this task (grounded
-                # RAG lookup + rephrasing, not multi-step reasoning). Disabling it cut
-                # first-token latency from ~4.4s to ~1s in testing.
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                tools=tools,
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(maximum_remote_calls=MAX_TOOL_CALLS),
+                # Thinking was previously disabled outright (thinking_budget=0) for
+                # latency, back when this endpoint was pure grounded lookup +
+                # rephrasing with no decision to make. Now the model has to decide
+                # *whether* a compound question needs a tool call at all and how to
+                # chain them (e.g. find_courses_taught_by, then one schedule search
+                # per course found) — -1 (dynamic) lets it spend thinking budget only
+                # when a question actually calls for that reasoning, rather than
+                # paying a fixed cost neither the simple nor the compound case needs
+                # to pay to the same degree.
+                thinking_config=types.ThinkingConfig(thinking_budget=-1),
             ),
         )
         acc = ""
@@ -494,6 +546,13 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> StreamingRespon
         if sent < len(acc):
             cut = _sources_cut_index(acc)
             yield acc[sent : cut if cut is not None else len(acc)].rstrip()
-        yield build_sources_block(cited)
+        # Combines the upfront context with everything the model actually looked up
+        # via tool calls — custom function calling carries no grounding/citation
+        # metadata the model reports back, so this reuses the same score-based
+        # selection on the wider pool rather than trusting the model to say what it
+        # used. Re-sorted since `tool_results` arrives in tool-call order, not score
+        # order, and `select_citation_sources` assumes its input already is.
+        all_results = sorted(results + tool_results, key=lambda r: r.score, reverse=True)
+        yield build_sources_block(select_citation_sources(all_results))
 
     return StreamingResponse(event_stream(), media_type="text/plain")

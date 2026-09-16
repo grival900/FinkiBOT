@@ -131,11 +131,19 @@ def run_ingestion(
     cadence: str | None = None,
     progress_cb: ProgressCallback | None = None,
     incremental: bool = False,
+    name: str | None = None,
 ) -> dict[str, ScraperStats]:
     """Runs every enabled scraper matching `cadence` ("frequent" or "slow"), or every
     enabled scraper if `cadence` is None. Returns per-scraper counts (seen / new /
     updated / unchanged / failed), used by /admin/reindex for its progress + result
     summary and by the scheduler for logging.
+
+    `name`, when given, narrows the run to exactly that one `ScraperEntry.name` (e.g.
+    "finki_hub.sessions") regardless of `cadence` — for when only one source actually
+    needs re-fetching (a scraper/extraction fix, a known-stale page) and running every
+    other slow-cadence scraper alongside it would just be several extra rate-limited
+    minutes for no reason. Raises `ValueError` for an unknown name rather than silently
+    running nothing, since that's almost certainly a typo.
 
     When `incremental` is true, every scraper is handed the set of URLs already in the
     `documents` table for its source and skips re-fetching them — a fast "just pull in
@@ -151,11 +159,13 @@ def run_ingestion(
     Guarded by a lock so concurrent calls (e.g. scheduler + manual trigger) don't race —
     the frequent and slow scheduler jobs share this same lock, so one running long never
     causes the other to double up on the same source."""
+    if name is not None and name not in {entry.name for entry in SCRAPERS}:
+        raise ValueError(f"Unknown scraper name: {name!r} (see backend/scrapers/registry.py for valid names)")
     if not _ingestion_lock.acquire(blocking=False):
         logger.warning("Skipping ingestion — another ingestion is already running")
         return {}
     try:
-        return _run_ingestion_locked(cadence, progress_cb, incremental)
+        return _run_ingestion_locked(cadence, progress_cb, incremental, name)
     finally:
         _ingestion_lock.release()
 
@@ -194,6 +204,7 @@ def _run_ingestion_locked(
     cadence: str | None,
     progress_cb: ProgressCallback | None = None,
     incremental: bool = False,
+    name: str | None = None,
 ) -> dict[str, ScraperStats]:
     stats: dict[str, ScraperStats] = {}
     with SessionLocal() as db:
@@ -207,6 +218,7 @@ def _run_ingestion_locked(
             if entry.enabled
             and get_bool_setting(db, f"scraper_enabled:{entry.name}", True)
             and (cadence is None or entry.cadence == cadence)
+            and (name is None or entry.name == name)
         ]
         total = len(active)
         known = _known_urls_by_source(db) if incremental else {}

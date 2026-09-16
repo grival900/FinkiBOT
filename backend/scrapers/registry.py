@@ -22,6 +22,7 @@ from backend.scrapers.official_site.info_pages import scrape_info_pages
 from backend.scrapers.official_site.professors import scrape_professors
 from backend.scrapers.official_site.schedule_links import scrape_schedule_links
 from backend.scrapers.official_site.subjects import scrape_subjects
+from backend.scrapers.official_site.wp_posts import scrape_events, scrape_jobs_and_internships, scrape_projects
 
 
 Cadence = Literal["frequent", "slow"]
@@ -55,6 +56,15 @@ SCRAPERS: list[ScraperEntry] = [
     # rather than the usual one-request-per-discovered-item pattern that cadence
     # otherwise implies. See info_pages.py's docstring for scope/exclusions.
     ScraperEntry(name="official.info_pages", source="official", fn=scrape_info_pages, cadence="slow"),
+    # WordPress custom post types with full content in the listing response itself —
+    # no per-item detail fetch needed, so these are cheap single-paginated-listing
+    # pulls despite covering hundreds of items. See wp_posts.py's docstring for why
+    # these three (and not nastaven_kadar/schedule) are worth reading via REST.
+    ScraperEntry(name="official.events", source="official", fn=scrape_events, cadence="frequent"),
+    ScraperEntry(name="official.projects", source="official", fn=scrape_projects, cadence="frequent"),
+    ScraperEntry(
+        name="official.jobs_and_internships", source="official", fn=scrape_jobs_and_internships, cadence="frequent"
+    ),
     # Must run after finki_hub.courses — it reads official subject-page URLs that
     # finki_hub.courses already captured from the finki-hub detail dialog, rather than
     # discovering them independently (there's no listing/sitemap of its own).

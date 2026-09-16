@@ -11,7 +11,18 @@ from typing import Any, Literal
 
 Source = Literal["official", "finki_hub"]
 DocumentType = Literal[
-    "announcement", "course", "professor", "staff", "thesis", "schedule", "material", "consultation"
+    "announcement",
+    "course",
+    "professor",
+    "staff",
+    "thesis",
+    "schedule",
+    "material",
+    "consultation",
+    "page",
+    "event",
+    "project",
+    "job",
 ]
 
 

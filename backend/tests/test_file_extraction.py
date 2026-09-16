@@ -129,6 +129,84 @@ def test_extract_xlsx_schedule_grid_skips_sheets_whose_title_is_not_a_plain_date
     assert published_at == datetime(2026, 9, 10)
 
 
+def test_extract_xlsx_schedule_grid_reads_a_color_filled_block_with_no_merge():
+    """The motivating bug, confirmed live against a real September session file:
+    "Структурно програмирање"'s actual exam block (08:00-14:00 across 9 rooms) has no
+    Excel merge at all - it's drawn purely with matching solid red cell-fill, course
+    name typed only in the top-left cell, every other cell in the block blank. Without
+    color-based resolution, extraction could only ever see that one top-left cell and
+    reported "08:00-08:30, one room" - exactly wrong, even though the data needed to
+    get it right is present, just not merge-encoded."""
+    import io
+
+    import openpyxl
+    from openpyxl.styles import PatternFill
+    from datetime import time as dtime
+
+    red = PatternFill(fill_type="solid", fgColor="FFFF0000")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "10.09.2026"
+    ws["B2"] = "лаб. 1"
+    ws["C2"] = "лаб. 2"
+    for row, t in ((3, dtime(8, 0)), (4, dtime(8, 30)), (5, dtime(9, 0))):
+        ws.cell(row=row, column=1, value=t)
+        ws.cell(row=row, column=2).fill = red
+        ws.cell(row=row, column=3).fill = red
+    ws["B3"] = "Структурно програмирање"  # the only cell that actually has the text
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    text, _ = extract_xlsx_schedule_grid(buf.getvalue())
+    lines = [line for line in text.splitlines() if "Структурно програмирање" in line]
+
+    assert len(lines) == 1
+    assert lines[0] == "[10.09.2026 08:00-09:30 лаб. 1, лаб. 2: Структурно програмирање]"
+
+
+def test_extract_xlsx_schedule_grid_color_block_does_not_cross_a_different_course():
+    """Reproduces the real "Гости Израел" notch found alongside the bug above: a
+    second, unrelated booking with its own real text and its own different fill sits
+    *inside* the color-filled course's rectangle. A naive bounding-rectangle expansion
+    would either swallow that unrelated booking or refuse to extend past it and
+    under-report the real course's other rooms; flood-fill should stop exactly at the
+    color boundary in both directions, attributing each cell to the right course."""
+    import io
+
+    import openpyxl
+    from openpyxl.styles import PatternFill
+    from datetime import time as dtime
+
+    red = PatternFill(fill_type="solid", fgColor="FFFF0000")
+    blue = PatternFill(fill_type="solid", fgColor="FF0000FF")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "11.09.2026"
+    ws["B2"] = "лаб. 1"
+    ws["C2"] = "лаб. 2"
+    for row, t in ((3, dtime(8, 0)), (4, dtime(8, 30)), (5, dtime(9, 0))):
+        ws.cell(row=row, column=1, value=t)
+    for row in (3, 4, 5):
+        ws.cell(row=row, column=2).fill = red
+    ws.cell(row=3, column=3).fill = red
+    ws.cell(row=5, column=3).fill = red
+    ws["B3"] = "Курс А"
+    ws["C4"] = "Друг курс"  # a real, unrelated booking carved out of the block
+    ws.cell(row=4, column=3).fill = blue
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    text, _ = extract_xlsx_schedule_grid(buf.getvalue())
+    lines = text.splitlines()
+
+    course_a = next(line for line in lines if "Курс А" in line)
+    assert course_a == "[11.09.2026 08:00-09:30 лаб. 1, лаб. 2: Курс А]"
+    other = next(line for line in lines if "Друг курс" in line)
+    assert other == "[11.09.2026 08:30-09:00 лаб. 2: Друг курс]"
+
+
 def test_extract_xlsx_schedule_grid_empty_workbook_returns_empty_string_and_no_date():
     import io
 

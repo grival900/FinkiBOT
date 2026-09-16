@@ -79,7 +79,7 @@ def test_progress_callback_updates_the_job():
     """The callback pipeline.run_ingestion invokes must move the job's progress fields."""
     captured = {}
 
-    def fake_run_ingestion(cadence, progress_cb=None, incremental=False):
+    def fake_run_ingestion(cadence, progress_cb=None, incremental=False, name=None):
         progress_cb(0, 2, "official.announcements")
         progress_cb(1, 2, "finki_hub.courses")
         captured["mid"] = (admin._reindex_job.progress_done, admin._reindex_job.current_scraper)

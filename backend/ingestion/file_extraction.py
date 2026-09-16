@@ -111,6 +111,84 @@ def _resolve_merged_cells(ws) -> dict[tuple[int, int], object]:
     return overrides
 
 
+def _fill_key(cell) -> tuple | None:
+    """A comparable identity for a cell's solid background fill, or None for no/non-
+    solid fill. openpyxl represents a fill color as either a direct RGB string or a
+    theme index + tint, never both, so the key has to branch on which one is set -
+    two cells "look the same color" only when both the kind of color reference and its
+    value match."""
+    fill = cell.fill
+    if fill is None or fill.patternType != "solid":
+        return None
+    fg = fill.fgColor
+    if fg.type == "rgb":
+        return ("rgb", fg.rgb)
+    if fg.type == "theme":
+        return ("theme", fg.theme, fg.tint)
+    return None
+
+
+def _resolve_color_blocks(ws, cell_value, header_row_index: int) -> dict[tuple[int, int], object]:
+    """Some session sheets mark a course's whole room/time block purely with matching
+    solid cell-fill color instead of an actual Excel merge - confirmed live: a real
+    September session's "Структурно програмирање" renders as a solid red rectangle
+    spanning 08:00-14:00 across 9 rooms, but only its top-left cell (08:00, лаб. 2)
+    actually has the course name; every other cell in that rectangle is blank, telling
+    it apart from a genuinely empty slot only by sharing that same fill color.
+    `_resolve_merged_cells` sees nothing there at all (there is no merge), so without
+    this the extractor could only ever report that single top-left cell - exactly the
+    "08:00-08:30, лаб. 2 only" bug this fixes.
+
+    Flood-fills every 4-connected run of same-colored *empty* cells outward from its
+    anchor (the one cell in the run with real text) and returns a {(row, col): value}
+    override map for the rest of the run, same shape as `_resolve_merged_cells`'s
+    result so both can feed the same `cell_value` lookup. A plain bounding-rectangle
+    assumption isn't enough on its own: the real example above has another booking
+    ("Гости Израел", its own genuine merge with a different fill) carved out of the
+    middle of one column, making the true shape notched rather than a clean
+    rectangle - flood fill naturally stops at that boundary since the colors differ,
+    where a rectangle-expansion approach would either swallow the unrelated booking or
+    stop too early and under-report the real block's other columns.
+
+    Bounded to the sheet's own body rows/columns (below the header row, from column B
+    on) so it can never run away into a banner row or a differently-colored legend
+    column that also happens to use solid fills for unrelated styling reasons."""
+    rows = range(header_row_index + 1, ws.max_row + 1)
+    cols = range(2, ws.max_column + 1)
+
+    def fill_key(row: int, col: int) -> tuple | None:
+        return _fill_key(ws.cell(row=row, column=col))
+
+    visited: set[tuple[int, int]] = set()
+    overrides: dict[tuple[int, int], object] = {}
+
+    for row in rows:
+        for col in cols:
+            if (row, col) in visited:
+                continue
+            value = cell_value(row, col)
+            if value in (None, ""):
+                continue
+            anchor_key = fill_key(row, col)
+            if anchor_key is None:
+                continue
+            visited.add((row, col))
+            stack = [(row, col)]
+            while stack:
+                r, c = stack.pop()
+                for nr, nc in ((r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)):
+                    if nr not in rows or nc not in cols or (nr, nc) in visited:
+                        continue
+                    if cell_value(nr, nc) not in (None, ""):
+                        continue
+                    if fill_key(nr, nc) != anchor_key:
+                        continue
+                    visited.add((nr, nc))
+                    overrides[(nr, nc)] = value
+                    stack.append((nr, nc))
+    return overrides
+
+
 def _representative_date(dates: list[datetime.datetime]) -> datetime.datetime:
     """The median of the *majority year's* dates, not the plain median or minimum -
     specifically because both are sensitive to a single bad outlier, and FINKI's own
@@ -225,6 +303,17 @@ def extract_xlsx_schedule_grid(data: bytes) -> tuple[str, datetime.datetime | No
         if not header:
             continue
 
+        # A course whose block is drawn with matching cell-fill color rather than an
+        # actual merge (see `_resolve_color_blocks`) - falls back to `cell_value`
+        # itself wherever no such block was found, so this is a strict superset of it.
+        color_overrides = _resolve_color_blocks(ws, cell_value, header_row_index)
+
+        def cell_value_with_color(row: int, col: int):
+            value = cell_value(row, col)
+            if value not in (None, ""):
+                return value
+            return color_overrides.get((row, col))
+
         # course -> (time, room) occurrences, in row order
         occurrences: dict[str, list[tuple[datetime.time, str]]] = {}
         all_row_times: list[datetime.time] = []
@@ -237,7 +326,7 @@ def extract_xlsx_schedule_grid(data: bytes) -> tuple[str, datetime.datetime | No
             all_row_times.append(time_value)
 
             for col, room in header.items():
-                course = cell_value(row, col)
+                course = cell_value_with_color(row, col)
                 if course in (None, "", ".") or not str(course).strip():
                     continue
                 course = _normalize_ws(str(course))
