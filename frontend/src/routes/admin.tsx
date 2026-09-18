@@ -52,15 +52,17 @@ function AdminPage() {
 
   return (
     <Page title={t("admin")} wide>
-      <div className="mb-4 inline-flex rounded-md border border-border p-0.5">
+      <div className="mb-4 inline-flex rounded-md border border-border bg-card p-0.5">
         {(["users", "settings"] as const).map((tb) => (
           <button
             key={tb}
             type="button"
             onClick={() => setTab(tb)}
             className={cn(
-              "rounded px-3 py-1.5 text-sm transition-colors",
-              tab === tb ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-accent",
+              "rounded px-3 py-1.5 text-sm font-medium transition-colors",
+              tab === tb
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
             )}
           >
             {tb === "users" ? t("admin_users") : t("admin_settings")}
@@ -538,6 +540,19 @@ function SettingsSection() {
             onChange={(e) => setSettings({ ...settings, enable_scheduler: e.target.checked })}
           />
           <span className="text-sm">ENABLE_SCHEDULER</span>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-muted-foreground">LLM_PROVIDER</span>
+          <select
+            value={settings.llm_provider}
+            onChange={(e) =>
+              setSettings({ ...settings, llm_provider: e.target.value as SiteSettings["llm_provider"] })
+            }
+            className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-ring"
+          >
+            <option value="gemini">Gemini</option>
+            <option value="groq">Groq</option>
+          </select>
         </label>
       </div>
 

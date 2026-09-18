@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from backend.core.site_settings import get_bool_setting
 from backend.db import SessionLocal
-from backend.ingestion.chunking import chunk_text
+from backend.ingestion.chunking import get_chunks
 from backend.ingestion.embeddings import embed_texts
 from backend.models import Chunk, Document
 from backend.scrapers.normalize import NormalizedDocument
@@ -90,6 +90,15 @@ def upsert_document(db: Session, ndoc: NormalizedDocument) -> tuple[Document, Ou
         return doc, "new"
 
     if existing.content_hash == ndoc.content_hash:
+        # Content is the expensive part (it's what drives re-chunking/re-embedding,
+        # hence the early return), but published_at/metadata are cheap to keep in sync
+        # regardless — e.g. a scraper that starts deriving published_at from content it
+        # already had would otherwise never backfill existing rows, since a re-scrape
+        # produces byte-identical content and this branch would keep returning early
+        # before ever touching them. Same reasoning the "moved" branch above already
+        # applies to a URL change alongside unchanged content.
+        existing.published_at = ndoc.published_at
+        existing.doc_metadata = ndoc.metadata
         return existing, "unchanged"
 
     existing.title = ndoc.title
@@ -103,7 +112,7 @@ def upsert_document(db: Session, ndoc: NormalizedDocument) -> tuple[Document, Ou
 def reindex_document(db: Session, doc: Document) -> None:
     db.query(Chunk).filter(Chunk.document_id == doc.id).delete()
 
-    texts = chunk_text(doc.content)
+    texts = get_chunks(doc.type, doc.content)
     if not texts:
         return
     vectors = embed_texts(texts)
@@ -122,11 +131,19 @@ def run_ingestion(
     cadence: str | None = None,
     progress_cb: ProgressCallback | None = None,
     incremental: bool = False,
+    name: str | None = None,
 ) -> dict[str, ScraperStats]:
     """Runs every enabled scraper matching `cadence` ("frequent" or "slow"), or every
     enabled scraper if `cadence` is None. Returns per-scraper counts (seen / new /
     updated / unchanged / failed), used by /admin/reindex for its progress + result
     summary and by the scheduler for logging.
+
+    `name`, when given, narrows the run to exactly that one `ScraperEntry.name` (e.g.
+    "finki_hub.sessions") regardless of `cadence` — for when only one source actually
+    needs re-fetching (a scraper/extraction fix, a known-stale page) and running every
+    other slow-cadence scraper alongside it would just be several extra rate-limited
+    minutes for no reason. Raises `ValueError` for an unknown name rather than silently
+    running nothing, since that's almost certainly a typo.
 
     When `incremental` is true, every scraper is handed the set of URLs already in the
     `documents` table for its source and skips re-fetching them — a fast "just pull in
@@ -142,11 +159,13 @@ def run_ingestion(
     Guarded by a lock so concurrent calls (e.g. scheduler + manual trigger) don't race —
     the frequent and slow scheduler jobs share this same lock, so one running long never
     causes the other to double up on the same source."""
+    if name is not None and name not in {entry.name for entry in SCRAPERS}:
+        raise ValueError(f"Unknown scraper name: {name!r} (see backend/scrapers/registry.py for valid names)")
     if not _ingestion_lock.acquire(blocking=False):
         logger.warning("Skipping ingestion — another ingestion is already running")
         return {}
     try:
-        return _run_ingestion_locked(cadence, progress_cb, incremental)
+        return _run_ingestion_locked(cadence, progress_cb, incremental, name)
     finally:
         _ingestion_lock.release()
 
@@ -185,6 +204,7 @@ def _run_ingestion_locked(
     cadence: str | None,
     progress_cb: ProgressCallback | None = None,
     incremental: bool = False,
+    name: str | None = None,
 ) -> dict[str, ScraperStats]:
     stats: dict[str, ScraperStats] = {}
     with SessionLocal() as db:
@@ -198,6 +218,7 @@ def _run_ingestion_locked(
             if entry.enabled
             and get_bool_setting(db, f"scraper_enabled:{entry.name}", True)
             and (cadence is None or entry.cadence == cadence)
+            and (name is None or entry.name == name)
         ]
         total = len(active)
         known = _known_urls_by_source(db) if incremental else {}

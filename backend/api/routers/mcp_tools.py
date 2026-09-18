@@ -14,12 +14,14 @@ from fastapi import APIRouter, HTTPException
 
 from backend.api.schemas import McpCallRequest, McpToolOut, McpToolParam
 from backend.mcp_servers.finki_hub_mcp.server import (
+    search_consultations,
     search_courses,
     search_exam_sessions,
     search_materials,
     search_staff,
     search_thesis_archive,
 )
+from backend.mcp_servers.official_live_mcp.server import search_official_site_live
 from backend.mcp_servers.official_mcp.server import (
     get_course_info,
     get_exam_schedule,
@@ -41,9 +43,13 @@ SERVERS: dict[str, dict[str, Callable]] = {
     "finki_hub": {
         "search_courses": search_courses,
         "search_staff": search_staff,
+        "search_consultations": search_consultations,
         "search_materials": search_materials,
         "search_thesis_archive": search_thesis_archive,
         "search_exam_sessions": search_exam_sessions,
+    },
+    "official_live": {
+        "search_official_site_live": search_official_site_live,
     },
 }
 

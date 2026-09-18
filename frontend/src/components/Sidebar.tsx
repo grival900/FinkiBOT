@@ -1,5 +1,4 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
 import {
   MessageSquare,
   Search,
@@ -10,7 +9,6 @@ import {
   Sun,
   Moon,
   Monitor,
-  Plus,
   User,
   Shield,
   LogOut,
@@ -18,7 +16,6 @@ import {
 import { useI18n, type TKey } from "@/lib/i18n";
 import { useTheme, type ThemeMode } from "@/lib/theme";
 import { useAuth } from "@/lib/auth";
-import { loadConversations, type Conversation } from "@/lib/chat-history";
 import { cn } from "@/lib/utils";
 
 const NAV: { to: string; key: TKey; icon: typeof Search }[] = [
@@ -42,22 +39,15 @@ export function Sidebar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const [conversations, setConversations] = useState<Conversation[]>([]);
   const nav = user?.is_admin ? [...NAV, { to: "/admin", key: "admin" as const, icon: Shield }] : NAV;
-
-  useEffect(() => {
-    const sync = () => setConversations(loadConversations(user?.id));
-    sync();
-    window.addEventListener("finkibot-conversations", sync);
-    return () => window.removeEventListener("finkibot-conversations", sync);
-  }, [user?.id]);
 
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground">
       <div className="border-b border-border px-4 py-4">
         <Link to="/" className="flex items-center gap-2">
-          <span className="flex size-8 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
-            FB
+          <span className="flex size-8 flex-col items-center justify-center gap-px rounded-md bg-primary leading-none text-primary-foreground">
+            <span className="text-[9px] font-extrabold tracking-wide">IO</span>
+            <span className="text-[7px] font-bold tracking-wide">BOT</span>
           </span>
           <span>
             <span className="block text-sm font-semibold">{t("brand")}</span>
@@ -66,7 +56,7 @@ export function Sidebar() {
         </Link>
       </div>
 
-      <nav className="flex flex-col gap-0.5 p-2">
+      <nav className="flex min-h-0 flex-1 flex-col gap-0.5 p-2">
         {nav.map(({ to, key, icon: Icon }) => {
           const active = to === "/" ? pathname === "/" : pathname.startsWith(to);
           return (
@@ -86,38 +76,6 @@ export function Sidebar() {
           );
         })}
       </nav>
-
-      <div className="flex min-h-0 flex-1 flex-col border-t border-border p-2">
-        <div className="flex items-center justify-between px-2 py-1.5">
-          <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            {t("history")}
-          </span>
-          <button
-            type="button"
-            onClick={() => navigate({ to: "/", search: { new: Date.now() } })}
-            className="rounded-md p-1 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-            aria-label={t("new_chat")}
-          >
-            <Plus className="size-4" />
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {conversations.length === 0 ? (
-            <p className="px-2 py-1 text-xs text-muted-foreground">{t("no_history")}</p>
-          ) : (
-            conversations.map((c) => (
-              <Link
-                key={c.id}
-                to="/"
-                search={{ c: c.id }}
-                className="block truncate rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-              >
-                {c.title}
-              </Link>
-            ))
-          )}
-        </div>
-      </div>
 
       <div className="space-y-3 border-t border-border p-3">
         {user ? (

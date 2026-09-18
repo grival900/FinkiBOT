@@ -26,8 +26,12 @@ from collections.abc import Iterator
 
 from backend.scrapers.http import get, make_client
 from backend.scrapers.normalize import NormalizedDocument
-from backend.scrapers.official_site.announcements import LISTING_PATH
 from backend.scrapers.official_site.base import BASE_URL, parse_html
+
+# `announcements.py` no longer fetches this HTML page itself (it reads the REST API
+# now) but the widget scraped here only exists in the page's rendered HTML, not in
+# any REST response — so this scraper still needs the page directly.
+LISTING_PATH = "/announcements/"
 
 
 def parse_schedule_links_html(html: bytes | str) -> list[tuple[str, str]]:

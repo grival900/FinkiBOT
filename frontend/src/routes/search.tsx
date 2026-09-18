@@ -15,6 +15,7 @@ const TYPE_LABEL_KEYS: Record<string, TKey> = {
   schedule: "type_schedule",
   thesis: "type_thesis",
   page: "type_page",
+  consultation: "type_consultation",
 };
 
 function typeLabel(type: string, t: (k: TKey) => string): string {
@@ -255,23 +256,27 @@ function SearchPage() {
 
       {results && results.length > 0
         ? (() => {
+            // The full set of chip labels never changes with the filters — only the
+            // counts (and which chips are reachable) do.
+            const sources = Array.from(new Set(results.map((r) => r.source))).sort();
+            const types = Array.from(new Set(results.map((r) => r.type))).sort();
+
+            // Each axis's counts are computed against the *other* axis's active
+            // filter only (never its own) — that's what makes "select one source"
+            // update the type counts/greying, and vice versa, instead of staying
+            // frozen at the totals from the initial unfiltered result set.
             const sourceCounts = new Map<string, number>();
+            for (const r of results) {
+              if (activeTypes.size === 0 || activeTypes.has(r.type)) {
+                sourceCounts.set(r.source, (sourceCounts.get(r.source) ?? 0) + 1);
+              }
+            }
             const typeCounts = new Map<string, number>();
             for (const r of results) {
-              sourceCounts.set(r.source, (sourceCounts.get(r.source) ?? 0) + 1);
-              typeCounts.set(r.type, (typeCounts.get(r.type) ?? 0) + 1);
+              if (activeSources.size === 0 || activeSources.has(r.source)) {
+                typeCounts.set(r.type, (typeCounts.get(r.type) ?? 0) + 1);
+              }
             }
-            const sources = Array.from(sourceCounts.keys()).sort();
-            const types = Array.from(typeCounts.keys()).sort();
-
-            // With exactly one source selected, a type that only exists under the
-            // *other* source can't possibly match anything — greyed out and
-            // unclickable, but still listed (not hidden) so it's clear it exists,
-            // just not reachable under the current source filter.
-            const sourceFilterNarrowed = activeSources.size > 0 && activeSources.size < sources.length;
-            const availableTypesUnderSource = sourceFilterNarrowed
-              ? new Set(results.filter((r) => activeSources.has(r.source)).map((r) => r.type))
-              : null;
 
             return (
               <div className="mt-4 space-y-2">
@@ -280,19 +285,29 @@ function SearchPage() {
                     <span className="self-center pr-1 text-xs text-muted-foreground">
                       {t("filter_by_source")}:
                     </span>
-                    {sources.map((src) => (
-                      <button
-                        key={src}
-                        type="button"
-                        onClick={() => toggleSource(src)}
-                        className={cn(
-                          "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
-                          sourceChipClasses(src, activeSources.has(src)),
-                        )}
-                      >
-                        {sourceLabel(src)} ({sourceCounts.get(src)})
-                      </button>
-                    ))}
+                    {sources.map((src) => {
+                      const count = sourceCounts.get(src) ?? 0;
+                      // Only grey out a source the current type filter has narrowed
+                      // to zero matches for — never one that's already selected, so
+                      // deselecting it always stays reachable.
+                      const disabled = count === 0 && !activeSources.has(src);
+                      return (
+                        <button
+                          key={src}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => toggleSource(src)}
+                          className={cn(
+                            "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                            disabled
+                              ? "cursor-not-allowed border-border bg-card text-muted-foreground/50"
+                              : sourceChipClasses(src, activeSources.has(src)),
+                          )}
+                        >
+                          {sourceLabel(src)} ({count})
+                        </button>
+                      );
+                    })}
                   </div>
                 ) : null}
                 {types.length >= 2 ? (
@@ -301,7 +316,8 @@ function SearchPage() {
                       {t("filter_by_type")}:
                     </span>
                     {types.map((type) => {
-                      const disabled = availableTypesUnderSource !== null && !availableTypesUnderSource.has(type);
+                      const count = typeCounts.get(type) ?? 0;
+                      const disabled = count === 0 && !activeTypes.has(type);
                       return (
                         <button
                           key={type}
@@ -317,7 +333,7 @@ function SearchPage() {
                                 : "border-border bg-card text-muted-foreground hover:bg-accent",
                           )}
                         >
-                          {typeLabel(type, t)} ({typeCounts.get(type)})
+                          {typeLabel(type, t)} ({count})
                         </button>
                       );
                     })}

@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Literal
 
+from backend.scrapers.finki_hub.consultations import scrape_consultations
 from backend.scrapers.finki_hub.courses import scrape_courses
 from backend.scrapers.finki_hub.recordings import scrape_recordings
 from backend.scrapers.finki_hub.schedules import scrape_schedules
@@ -21,6 +22,7 @@ from backend.scrapers.official_site.info_pages import scrape_info_pages
 from backend.scrapers.official_site.professors import scrape_professors
 from backend.scrapers.official_site.schedule_links import scrape_schedule_links
 from backend.scrapers.official_site.subjects import scrape_subjects
+from backend.scrapers.official_site.wp_posts import scrape_events, scrape_jobs_and_internships, scrape_projects
 
 
 Cadence = Literal["frequent", "slow"]
@@ -54,6 +56,15 @@ SCRAPERS: list[ScraperEntry] = [
     # rather than the usual one-request-per-discovered-item pattern that cadence
     # otherwise implies. See info_pages.py's docstring for scope/exclusions.
     ScraperEntry(name="official.info_pages", source="official", fn=scrape_info_pages, cadence="slow"),
+    # WordPress custom post types with full content in the listing response itself —
+    # no per-item detail fetch needed, so these are cheap single-paginated-listing
+    # pulls despite covering hundreds of items. See wp_posts.py's docstring for why
+    # these three (and not nastaven_kadar/schedule) are worth reading via REST.
+    ScraperEntry(name="official.events", source="official", fn=scrape_events, cadence="frequent"),
+    ScraperEntry(name="official.projects", source="official", fn=scrape_projects, cadence="frequent"),
+    ScraperEntry(
+        name="official.jobs_and_internships", source="official", fn=scrape_jobs_and_internships, cadence="frequent"
+    ),
     # Must run after finki_hub.courses — it reads official subject-page URLs that
     # finki_hub.courses already captured from the finki-hub detail dialog, rather than
     # discovering them independently (there's no listing/sitemap of its own).
@@ -61,7 +72,16 @@ SCRAPERS: list[ScraperEntry] = [
     ScraperEntry(name="official.subjects", source="official", fn=scrape_subjects, cadence="slow"),
     ScraperEntry(name="finki_hub.recordings", source="finki_hub", fn=scrape_recordings, cadence="slow"),
     ScraperEntry(name="finki_hub.staff", source="finki_hub", fn=scrape_staff, cadence="frequent"),
-    ScraperEntry(name="finki_hub.sessions", source="finki_hub", fn=scrape_sessions, cadence="frequent"),
+    # One request per active staff member's consultations page (~96 today) — by the
+    # cadence rule above that's a "slow" cost, unlike the single-JSON-fetch staff
+    # scraper above it, even though both read from the same staff.json.
+    ScraperEntry(name="finki_hub.consultations", source="finki_hub", fn=scrape_consultations, cadence="slow"),
+    # Same "slow" reasoning as consultations above: this used to be a single JSON
+    # fetch, but now does one HTTP GET + a full XLSX/PDF parse per session file
+    # (~40 files) to extract real exam content — "frequent" (hourly, non-incremental)
+    # would re-download and re-parse every session file every hour for no benefit,
+    # since session files essentially never change once published.
+    ScraperEntry(name="finki_hub.sessions", source="finki_hub", fn=scrape_sessions, cadence="slow"),
     ScraperEntry(
         name="finki_hub.thesis_archive", source="finki_hub", fn=scrape_thesis_archive, enabled=False, cadence="slow"
     ),

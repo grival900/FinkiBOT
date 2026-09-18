@@ -15,6 +15,27 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     llm_model: str = "gemini-2.5-flash"
 
+    # Second provider — purely a fallback (see `core/llm_providers.py`): when the
+    # active provider hits a quota/rate-limit error, `/chat` retries once against the
+    # other one before giving up, and an admin can also switch which is preferred at
+    # all via the `llm_provider` site_settings row. Empty by default since Groq
+    # requires its own free API key (https://console.groq.com/keys) — the fallback
+    # attempt simply fails (surfaced as an error, not silently ignored) until one is
+    # set, same as any other missing-credential case.
+    groq_api_key: str = ""
+    # llama-3.3-70b-versatile (the obvious pick when this was written) turned out to
+    # be gone from Groq's catalog entirely by the time this was actually tested live
+    # — confirmed against `client.models.list()` on 2026-09-16, Groq's lineup had
+    # moved on to openai/gpt-oss-*, qwen/*, groq/compound(-mini), and a few others.
+    # gpt-oss-120b is OpenAI's own open-weight model, built with tool-calling as a
+    # first-class capability — confirmed live here to actually execute this app's
+    # tools correctly, not just accept the schema.
+    groq_model: str = "openai/gpt-oss-120b"
+    # Which provider `/chat` tries first. Admin-overridable at runtime via a
+    # `llm_provider` site_settings row (see `core/site_settings.py`) — this is only
+    # the env-level fallback default, same pattern as `chat_min_score` below.
+    llm_provider: str = "gemini"
+
     embedding_model_name: str = "BAAI/bge-m3"
 
     # Chat retrieval: a retrieved chunk whose cosine similarity to the question is

@@ -3,6 +3,7 @@ import { useRouterState } from "@tanstack/react-router";
 import { isGuest, useAuth } from "@/lib/auth";
 import { PUBLIC_PATHS } from "@/components/AuthGate";
 import { Sidebar } from "@/components/Sidebar";
+import { HistoryPanel } from "@/components/HistoryPanel";
 
 // The sidebar (nav, chat history, account) has nothing useful to show before the
 // visitor has either logged in or picked "Continue as guest" on the login gate (see
@@ -30,7 +31,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       {authorized ? <Sidebar /> : null}
-      <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
+      <main className="bg-plaid min-w-0 flex-1 overflow-y-auto">{children}</main>
+      {authorized ? <HistoryPanel /> : null}
     </div>
   );
 }

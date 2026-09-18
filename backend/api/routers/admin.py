@@ -20,11 +20,13 @@ from backend.api.schemas import (
 )
 from backend.core.auth import require_admin
 from backend.core.config import get_settings
+from backend.core.llm_providers import PROVIDERS
 from backend.core.site_settings import (
     get_bool_setting,
     get_float_setting,
     get_int_or_none_setting,
     get_int_setting,
+    get_str_setting,
     set_setting,
 )
 from backend.core.users import (
@@ -58,6 +60,7 @@ class _ReindexJob:
     global is enough — it survives until the next run or a server restart."""
 
     cadence: str
+    scraper: str | None = None
     incremental: bool = False
     state: Literal["running", "done", "error"] = "running"
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -75,9 +78,11 @@ _reindex_lock = threading.Lock()
 _reindex_job: _ReindexJob | None = None
 
 
-def _background_reindex(cadence: str | None, refresh_seed: bool, incremental: bool = False) -> None:
+def _background_reindex(
+    cadence: str | None, refresh_seed: bool, incremental: bool = False, scraper: str | None = None
+) -> None:
     global _reindex_job
-    job = _ReindexJob(cadence=cadence or "full", incremental=incremental)
+    job = _ReindexJob(cadence=scraper or cadence or "full", scraper=scraper, incremental=incremental)
     with _reindex_lock:
         _reindex_job = job
 
@@ -85,7 +90,7 @@ def _background_reindex(cadence: str | None, refresh_seed: bool, incremental: bo
         job.progress_done, job.progress_total, job.current_scraper = done, total, current
 
     try:
-        stats = run_ingestion(cadence, progress_cb=on_progress, incremental=incremental)
+        stats = run_ingestion(cadence, progress_cb=on_progress, incremental=incremental, name=scraper)
     except Exception as exc:
         logger.exception("Background reindex failed")
         job.error = str(exc) or exc.__class__.__name__
@@ -93,7 +98,7 @@ def _background_reindex(cadence: str | None, refresh_seed: bool, incremental: bo
         job.finished_at = datetime.now(timezone.utc)
         return
 
-    logger.info("Reindex (%s) finished: %s", cadence or "full", stats)
+    logger.info("Reindex (%s) finished: %s", scraper or cadence or "full", stats)
     job.scrapers = [
         ScraperStatOut(
             name=name, seen=s.seen, new=s.new, updated=s.updated, unchanged=s.unchanged, failed=s.failed
@@ -125,6 +130,7 @@ def _background_reindex(cadence: str | None, refresh_seed: bool, incremental: bo
 @router.post("/reindex")
 def reindex(
     cadence: Literal["frequent", "slow"] | None = None,
+    scraper: str | None = None,
     refresh_seed: bool = True,
     incremental: bool = False,
 ) -> dict[str, str]:
@@ -140,10 +146,15 @@ def reindex(
     by the same slow sources). The scheduler already runs both cadences on their own
     intervals (see `scheduler.py`) — this endpoint is for an on-demand/manual run.
 
+    `scraper`, when given, narrows the run to exactly that one `ScraperEntry.name`
+    (see `GET /admin/scrapers` or `backend/scrapers/registry.py`) regardless of
+    `cadence` — for when only one source actually needs re-fetching (e.g. right after
+    fixing that source's own extraction code) rather than every cadence-mate too.
+
     `incremental` (default false): skip every page whose URL is already indexed and
     only fetch genuinely new documents — much faster on the slow sources, but it does
-    not pick up edits to pages already stored (a full run does). Best paired with a
-    periodic full run.
+    not pick up edits to pages already stored, including a scraper/extraction *code*
+    fix (a full run does). Best paired with a periodic full run.
 
     When `refresh_seed` is true (the default), the bundled seed
     (`backend/seed/documents.json`) is rewritten from the full `documents` table once
@@ -152,15 +163,17 @@ def reindex(
     on the machine running this backend — commit it to actually share the refresh.
     Pass `refresh_seed=false` on a deployment where the repo checkout isn't writable
     or shouldn't change."""
+    if scraper is not None and scraper not in {entry.name for entry in SCRAPERS}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown scraper name: {scraper!r}")
     with _reindex_lock:
         if _reindex_job is not None and _reindex_job.state == "running":
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A reindex is already running")
     thread = threading.Thread(
-        target=_background_reindex, args=(cadence, refresh_seed, incremental), daemon=True
+        target=_background_reindex, args=(cadence, refresh_seed, incremental, scraper), daemon=True
     )
     thread.start()
     mode = "incremental" if incremental else "full scan"
-    return {"status": f"reindex ({cadence or 'full'}, {mode}) started in background"}
+    return {"status": f"reindex ({scraper or cadence or 'full'}, {mode}) started in background"}
 
 
 @router.get("/reindex/status", response_model=ReindexStatusOut)
@@ -281,6 +294,7 @@ def _effective_settings(db: Session) -> SiteSettingsOut:
         scheduler_slow_interval_minutes=get_int_setting(
             db, "scheduler_slow_interval_minutes", defaults.scheduler_slow_interval_minutes
         ),
+        llm_provider=get_str_setting(db, "llm_provider", defaults.llm_provider),
         scrapers=[
             ScraperEnabledOut(
                 name=entry.name,
@@ -321,6 +335,11 @@ def update_site_settings(payload: SiteSettingsPatch, request: Request, db: Sessi
         set_setting(db, "scheduler_slow_interval_minutes", payload.scheduler_slow_interval_minutes)
         if scheduler is not None:
             scheduler.reschedule_job("scrape_slow", trigger="interval", minutes=payload.scheduler_slow_interval_minutes)
+
+    if payload.llm_provider is not None:
+        if payload.llm_provider not in PROVIDERS:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown provider: {payload.llm_provider}")
+        set_setting(db, "llm_provider", payload.llm_provider)
 
     if payload.scraper_enabled:
         valid_names = {entry.name for entry in SCRAPERS}

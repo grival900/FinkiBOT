@@ -67,7 +67,7 @@ function InsightsPage() {
   }, []);
 
   return (
-    <Page title="Insights">
+    <Page title={t("nav_insights")}>
       {loading ? <Notice kind="info">{t("loading")}</Notice> : null}
       {error ? (
         <Notice kind="error">

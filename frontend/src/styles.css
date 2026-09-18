@@ -97,6 +97,8 @@
   --sidebar-accent-foreground: oklch(0.3 0.06 300);
   --sidebar-border: oklch(0.91 0.01 300);
   --sidebar-ring: oklch(0.48 0.17 300);
+  --plaid-fine: oklch(0.48 0.17 300 / 2.5%);
+  --plaid-bold: oklch(0.48 0.17 300 / 4%);
 }
 
 .dark {
@@ -133,6 +135,8 @@
   --sidebar-accent-foreground: oklch(0.95 0.01 300);
   --sidebar-border: oklch(1 0 0 / 12%);
   --sidebar-ring: oklch(0.68 0.16 300);
+  --plaid-fine: oklch(1 0 0 / 2.5%);
+  --plaid-bold: oklch(1 0 0 / 4%);
 }
 
 @layer base {
@@ -144,6 +148,75 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
   }
+}
+
+/* Thin, rounded, theme-colored scrollbars everywhere instead of the OS default.
+   Firefox uses the two-value scrollbar-color shorthand; Chromium/WebKit need the
+   pseudo-elements. Both read the same palette vars so they stay in sync with
+   light/dark mode. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-muted-foreground) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-muted-foreground);
+  background-clip: content-box;
+  border: 2px solid transparent;
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-primary);
+}
+
+/* Barely-there woven texture for page backgrounds — meant to read as the grain of a
+   nice card stock or fabric, not as a visible grid. A tight diagonal crosshatch
+   (the "weave") plus a much more widely-spaced horizontal/vertical pair (the
+   "plaid" structure) at very low opacity, built from theme color so it re-tints
+   with the palette and between light/dark mode instead of needing its own colors.
+   Keep both layers faint: this should only be noticeable up close, never compete
+   with content sitting on top of it. */
+.bg-plaid {
+  background-color: var(--color-background);
+  background-image:
+    repeating-linear-gradient(
+      45deg,
+      var(--plaid-fine) 0px,
+      var(--plaid-fine) 1px,
+      transparent 1px,
+      transparent 7px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      var(--plaid-fine) 0px,
+      var(--plaid-fine) 1px,
+      transparent 1px,
+      transparent 7px
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      var(--plaid-bold) 0px,
+      var(--plaid-bold) 1px,
+      transparent 1px,
+      transparent 72px
+    ),
+    repeating-linear-gradient(
+      to right,
+      var(--plaid-bold) 0px,
+      var(--plaid-bold) 1px,
+      transparent 1px,
+      transparent 72px
+    );
 }
 
 /* Recolors the native date-input calendar icon to the site's purple accent — Chromium

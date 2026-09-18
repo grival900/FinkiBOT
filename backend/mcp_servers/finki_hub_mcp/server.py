@@ -24,10 +24,19 @@ def search_courses(query: str, limit: int = 5) -> list[dict]:
 @mcp.tool()
 def search_staff(query: str, limit: int = 5) -> list[dict]:
     """Search FINKI teaching staff by name, position, or email. Returns title,
-    position, cabinet, email, consultations link, and course portal link.
-    For detailed professor bios and publications, use the finki-official server's
-    `get_professor_info` tool instead."""
+    position, cabinet, email, and course portal link. For detailed professor bios and
+    publications, use the finki-official server's `get_professor_info` tool instead;
+    for actual scheduled consultation slots, use `search_consultations` instead."""
     return run_search(query, k=limit, source="finki_hub", type="staff")
+
+
+@mcp.tool()
+def search_consultations(query: str, limit: int = 5) -> list[dict]:
+    """Search professors' scheduled consultation slots by name (e.g. "Марјан Гушев").
+    Returns actual date/time/room for each upcoming slot, or a note that none are
+    currently scheduled - not just the booking-page link (use `search_staff` for
+    general staff directory info instead)."""
+    return run_search(query, k=limit, source="finki_hub", type="consultation")
 
 
 @mcp.tool()
@@ -47,9 +56,10 @@ def search_thesis_archive(query: str, limit: int = 5) -> list[dict]:
 
 @mcp.tool()
 def search_exam_sessions(query: str, limit: int = 5) -> list[dict]:
-    """Search exam session schedules by session name or academic year (e.g. "Јуни 2025",
-    "зимски колоквиум"). Returns download links to the schedule spreadsheets (XLSX/PDF)
-    hosted on assets.finki-hub.com."""
+    """Search exam session schedules by session name, academic year, or course name
+    (e.g. "Јуни 2025", "зимски колоквиум", "Дистрибуирани системи"). Returns actual
+    per-course date/time/room extracted from the schedule spreadsheets (XLSX; older
+    PDF sessions get plain text only), plus the download link to the original file."""
     return run_search(query, k=limit, source="finki_hub", type="schedule")
 
 
