@@ -38,6 +38,15 @@ export function saveConversations(list: Conversation[], userId?: string | null) 
   }
 }
 
+export function deleteConversation(id: string, userId?: string | null) {
+  const rest = loadConversations(userId).filter((x) => x.id !== id);
+  saveConversations(rest, userId);
+}
+
+export function clearConversations(userId?: string | null) {
+  saveConversations([], userId);
+}
+
 export function newId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }

@@ -52,15 +52,17 @@ function AdminPage() {
 
   return (
     <Page title={t("admin")} wide>
-      <div className="mb-4 inline-flex rounded-md border border-border p-0.5">
+      <div className="mb-4 inline-flex rounded-md border border-border bg-card p-0.5">
         {(["users", "settings"] as const).map((tb) => (
           <button
             key={tb}
             type="button"
             onClick={() => setTab(tb)}
             className={cn(
-              "rounded px-3 py-1.5 text-sm transition-colors",
-              tab === tb ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-accent",
+              "rounded px-3 py-1.5 text-sm font-medium transition-colors",
+              tab === tb
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
             )}
           >
             {tb === "users" ? t("admin_users") : t("admin_settings")}

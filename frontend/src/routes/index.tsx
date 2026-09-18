@@ -143,7 +143,7 @@ function ChatPage() {
                         <Markdown content={m.content} />
                       )
                     ) : loading ? (
-                      "…"
+                      t("thinking")
                     ) : (
                       ""
                     )}
