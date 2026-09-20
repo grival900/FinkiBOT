@@ -17,6 +17,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   const authorized = user !== null || isGuest();
   const onPublicPath = PUBLIC_PATHS.has(pathname);
 
+  // The embedded widget chat (see routes/widget.tsx) renders full-bleed inside a small
+  // WordPress iframe — no sidebar/history chrome would even fit, and it must never
+  // wait on auth state to resolve first (that would show a blank flash inside the
+  // bubble on every open). Bypassed before any of the loading/authorized checks below.
+  if (pathname === "/widget") {
+    return <main className="h-screen overflow-hidden bg-background">{children}</main>;
+  }
+
   // Auth state is client-only (localStorage), so the server has no way to know
   // whether this visitor is authorized — it always renders the actual page first.
   // Without this, an unauthenticated visitor landing on a protected route would

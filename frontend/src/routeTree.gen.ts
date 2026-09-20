@@ -19,6 +19,7 @@ import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SearchRouteImport } from './routes/search'
 import { Route as SubscribeRouteImport } from './routes/subscribe'
+import { Route as WidgetRouteImport } from './routes/widget'
 import { Route as DocumentsIdRouteImport } from './routes/documents.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -71,6 +72,11 @@ const SubscribeRoute = SubscribeRouteImport.update({
   path: '/subscribe',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WidgetRoute = WidgetRouteImport.update({
+  id: '/widget',
+  path: '/widget',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DocumentsIdRoute = DocumentsIdRouteImport.update({
   id: '/documents/$id',
   path: '/documents/$id',
@@ -88,6 +94,7 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/search': typeof SearchRoute
   '/subscribe': typeof SubscribeRoute
+  '/widget': typeof WidgetRoute
   '/documents/$id': typeof DocumentsIdRoute
 }
 export interface FileRoutesByTo {
@@ -101,6 +108,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/search': typeof SearchRoute
   '/subscribe': typeof SubscribeRoute
+  '/widget': typeof WidgetRoute
   '/documents/$id': typeof DocumentsIdRoute
 }
 export interface FileRoutesById {
@@ -115,6 +123,7 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/search': typeof SearchRoute
   '/subscribe': typeof SubscribeRoute
+  '/widget': typeof WidgetRoute
   '/documents/$id': typeof DocumentsIdRoute
 }
 export interface FileRouteTypes {
@@ -130,6 +139,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/search'
     | '/subscribe'
+    | '/widget'
     | '/documents/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -143,6 +153,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/search'
     | '/subscribe'
+    | '/widget'
     | '/documents/$id'
   id:
     | '__root__'
@@ -156,6 +167,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/search'
     | '/subscribe'
+    | '/widget'
     | '/documents/$id'
   fileRoutesById: FileRoutesById
 }
@@ -170,6 +182,7 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   SearchRoute: typeof SearchRoute
   SubscribeRoute: typeof SubscribeRoute
+  WidgetRoute: typeof WidgetRoute
   DocumentsIdRoute: typeof DocumentsIdRoute
 }
 
@@ -245,6 +258,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SubscribeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/widget': {
+      id: '/widget'
+      path: '/widget'
+      fullPath: '/widget'
+      preLoaderRoute: typeof WidgetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/documents/$id': {
       id: '/documents/$id'
       path: '/documents/$id'
@@ -266,6 +286,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   SearchRoute: SearchRoute,
   SubscribeRoute: SubscribeRoute,
+  WidgetRoute: WidgetRoute,
   DocumentsIdRoute: DocumentsIdRoute,
 }
 export const routeTree = rootRouteImport
