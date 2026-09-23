@@ -64,35 +64,55 @@ def _iter_rows(client: httpx.Client) -> Iterator[dict]:
         page_num += 1
 
 
-def scrape_announcements(skip_urls: set[str] | None = None) -> Iterator[NormalizedDocument]:
-    """The listing is newest-first, so `scrape_announcement_limit` (if set) caps this
-    to the N most recent announcements — the ones actually relevant to students —
-    rather than backfilling the entire historical board on every run. Admin-editable
-    (site_settings) — the env value is only the fallback default.
+def scrape_announcements(
+    skip_urls: set[str] | None = None,
+) -> Iterator[NormalizedDocument]:
+    """Scrape announcements from the WordPress REST API.
 
-    `skip_urls` (incremental run): don't re-yield announcements already indexed, and
-    stop paging once `INCREMENTAL_STOP_AFTER_KNOWN` known ones have gone by in a row."""
-    limit = get_setting_cached("scrape_announcement_limit", get_settings().scrape_announcement_limit, parse_int_or_none)
+    The API is newest-first and paginated. If scrape_announcement_limit is set,
+    only that many new announcements are yielded.
+
+    During incremental runs, already-indexed URLs are skipped. Once enough
+    consecutive known announcements are encountered, we stop because older
+    pages are unlikely to contain new content.
+    """
+    limit = get_setting_cached(
+        "scrape_announcement_limit",
+        get_settings().scrape_announcement_limit,
+        parse_int_or_none,
+    )
+
     yielded = 0
     consecutive_known = 0
 
     with make_client() as client:
         for row in _iter_rows(client):
+            # Respect configured scrape limit.
             if limit is not None and yielded >= limit:
                 break
 
             title, url, content, date_text = parse_wp_post_row(row)
+
             if not url:
                 continue
 
+            # Incremental mode: skip announcements already indexed.
             if skip_urls is not None and url in skip_urls:
                 consecutive_known += 1
+
                 if consecutive_known >= INCREMENTAL_STOP_AFTER_KNOWN:
                     break
+
                 continue
+
+            # We found something new, so reset the consecutive-known counter.
             consecutive_known = 0
 
-            published_at = datetime.fromisoformat(date_text) if date_text else None
+            published_at = (
+                datetime.fromisoformat(date_text)
+                if date_text
+                else None
+            )
 
             yield NormalizedDocument(
                 source="official",
@@ -102,4 +122,5 @@ def scrape_announcements(skip_urls: set[str] | None = None) -> Iterator[Normaliz
                 content=content or title,
                 published_at=published_at,
             ).clean()
+
             yielded += 1

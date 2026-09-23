@@ -44,7 +44,7 @@ LIVE_FALLBACK_LIMIT = 3
 # separate, independently-searched-for sources at once (e.g. one exam date per course
 # for a professor who teaches several) rather than the one hardcoded hop's single
 # course this used to be capped around.
-MAX_CITED_SOURCES = 5
+MAX_CITED_SOURCES = 3
 # A document whose best chunk scores more than this below the top hit is dropped from
 # the citation list (not the context) — see `select_citation_sources`.
 CITATION_SCORE_GAP = 0.15
